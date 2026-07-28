@@ -1,6 +1,6 @@
 {
   "name": "teley-cli",
-  "version": "0.1.4",
+  "version": "0.1.6",
   "description": "Terminal trace and log viewer for Teley. Point your OpenTelemetry or Sentry SDK at a room DSN and watch traces stream in as a live waterfall.",
   "license": "Apache-2.0",
   "author": "Abdelrahman Awad",
