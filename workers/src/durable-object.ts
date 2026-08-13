@@ -1,20 +1,20 @@
 // Durable Object for managing telemetry room state and WebSocket connections
 
+import { DurableObject } from 'cloudflare:workers';
+import * as Sentry from '@sentry/cloudflare';
 import type { Env } from './types';
+import { roomTag } from './util';
 
-export class TelemetryRoom implements DurableObject {
+class TelemetryRoomBase extends DurableObject<Env> {
   private receiveToken: string | null = null;
-  private state: DurableObjectState;
-  private env: Env;
 
-  constructor(state: DurableObjectState, env: Env) {
-    this.state = state;
-    this.env = env;
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
 
     // Restore token from storage
-    void this.state.blockConcurrencyWhile(async () => {
+    void this.ctx.blockConcurrencyWhile(async () => {
       this.receiveToken =
-        (await this.state.storage.get<string>('receiveToken')) ?? null;
+        (await this.ctx.storage.get<string>('receiveToken')) ?? null;
     });
   }
 
@@ -47,6 +47,9 @@ export class TelemetryRoom implements DurableObject {
     );
 
     if (!token) {
+      Sentry.logger.warn('WebSocket rejected: no token', {
+        room: this.roomName(),
+      });
       return new Response('Missing token', { status: 400 });
     }
 
@@ -54,12 +57,20 @@ export class TelemetryRoom implements DurableObject {
     if (!this.receiveToken) {
       console.log('[DO] First connection, claiming room with token');
       this.receiveToken = token;
-      await this.state.storage.put('receiveToken', token);
+      await this.ctx.storage.put('receiveToken', token);
+      Sentry.logger.info('Room claimed by first connection', {
+        room: this.roomName(),
+      });
     }
 
     // Validate token
     if (token !== this.receiveToken) {
       console.log('[DO] Token mismatch, rejecting');
+      // Expected when a stale tab reconnects to a reclaimed room, but a burst
+      // of these against one room is the signature of someone guessing.
+      Sentry.logger.warn('WebSocket rejected: token mismatch', {
+        room: this.roomName(),
+      });
       return new Response('Unauthorized', { status: 401 });
     }
 
@@ -67,11 +78,13 @@ export class TelemetryRoom implements DurableObject {
     const [client, server] = Object.values(pair);
 
     // Accept the WebSocket with hibernation support
-    this.state.acceptWebSocket(server);
-    console.log(
-      '[DO] WebSocket accepted, total sockets:',
-      this.state.getWebSockets().length,
-    );
+    this.ctx.acceptWebSocket(server);
+    const viewers = this.ctx.getWebSockets().length;
+    console.log('[DO] WebSocket accepted, total sockets:', viewers);
+    Sentry.logger.debug('WebSocket accepted', {
+      room: this.roomName(),
+      viewers,
+    });
 
     server.send(
       JSON.stringify({
@@ -90,32 +103,49 @@ export class TelemetryRoom implements DurableObject {
     const message = JSON.stringify(data);
 
     // Use getWebSockets() for hibernation-compatible WebSocket access
-    const sockets = this.state.getWebSockets();
+    const sockets = this.ctx.getWebSockets();
     console.log('[DO] Broadcasting to', sockets.length, 'sockets:', data.type);
 
+    let failed = 0;
     for (const ws of sockets) {
       try {
         ws.send(message);
       } catch (error) {
+        failed++;
         console.error('[DO] Failed to send to socket:', error);
       }
+    }
+
+    if (failed > 0) {
+      // Each failure is one viewer silently missing this update.
+      Sentry.logger.warn('Broadcast dropped for some sockets', {
+        room: this.roomName(),
+        message_type: data?.type ?? 'unknown',
+        failed,
+        total: sockets.length,
+      });
     }
   }
 
   private async resetAlarm(): Promise<void> {
     // Set alarm for 30 minutes from now
-    await this.state.storage.setAlarm(Date.now() + 30 * 60 * 1000);
+    await this.ctx.storage.setAlarm(Date.now() + 30 * 60 * 1000);
   }
 
   async alarm(): Promise<void> {
     // Check if there are any active sessions
-    const sockets = this.state.getWebSockets();
+    const sockets = this.ctx.getWebSockets();
     console.log('[DO] Alarm fired, active sockets:', sockets.length);
 
     if (sockets.length === 0) {
       // No active sessions, clean up the room
       console.log('[DO] No active sockets, cleaning up room');
-      await this.state.storage.deleteAll();
+      // The receive token dies with the room, so the next connection claims it
+      // fresh. Worth a trail when a viewer complains their room "reset".
+      Sentry.logger.info('Room evicted after inactivity', {
+        room: this.roomName(),
+      });
+      await this.ctx.storage.deleteAll();
       return;
     }
 
@@ -142,7 +172,7 @@ export class TelemetryRoom implements DurableObject {
   }
 
   private broadcastViewerCount(): void {
-    const sockets = this.state.getWebSockets();
+    const sockets = this.ctx.getWebSockets();
     const message = JSON.stringify({
       type: 'viewer_count',
       count: sockets.length,
@@ -158,5 +188,29 @@ export class TelemetryRoom implements DurableObject {
 
   webSocketError(ws: WebSocket, error: unknown): void {
     console.error('[DO] WebSocket error:', error);
+    Sentry.logger.error('WebSocket error', {
+      room: this.roomName(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  /**
+   * Durable Objects are addressed by name, so the room ID is recoverable here.
+   * Truncate it for the same reason the worker does: it is an ingest credential.
+   */
+  private roomName(): string {
+    return roomTag(this.ctx.id.name ?? this.ctx.id.toString());
   }
 }
+
+export const TelemetryRoom = Sentry.instrumentDurableObjectWithSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    environment: env.SENTRY_ENVIRONMENT,
+    release: env.CF_VERSION_METADATA?.id,
+    enableLogs: true,
+    tracesSampleRate: 1.0,
+    sendDefaultPii: false,
+  }),
+  TelemetryRoomBase,
+);

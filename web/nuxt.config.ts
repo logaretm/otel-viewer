@@ -21,6 +21,9 @@ export default defineNuxtConfig({
       githubUrl: 'https://github.com/logaretm/teley',
       authorName: 'Abdelrahman Awad',
       authorUrl: 'https://awad.dev',
+      // Set NUXT_PUBLIC_SENTRY_DSN at build time. Empty disables the SDK.
+      sentryDsn: '',
+      sentryEnvironment: 'production',
     },
   },
 

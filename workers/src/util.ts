@@ -13,6 +13,15 @@ const CORS_HEADERS = {
     'Content-Type, X-Sentry-Auth, sentry-trace, baggage',
 };
 
+/**
+ * A room ID is the ingest credential: anyone holding it can write to the room.
+ * Log only a short prefix, which is enough to correlate requests without
+ * putting a working key into our own telemetry.
+ */
+export function roomTag(roomId: string): string {
+  return `${roomId.slice(0, 4)}...`;
+}
+
 export function handleCORS(): Response {
   return new Response(null, {
     headers: { ...CORS_HEADERS, 'Access-Control-Max-Age': '86400' },
