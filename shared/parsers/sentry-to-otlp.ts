@@ -11,7 +11,12 @@ import {
   type ParsedLog,
   type ParsedMetric,
 } from './otlp-parser';
-import { generateTraceId, generateSpanId, generateMetricId } from './helpers';
+import {
+  generateTraceId,
+  generateSpanId,
+  generateMetricId,
+  toEpochMs,
+} from './helpers';
 
 export interface SentryConversionResult {
   traces: ParsedTrace[];
@@ -114,13 +119,9 @@ function convertSentryTransaction(transaction: any): {
   const traceId = transaction.contexts?.trace?.trace_id || generateTraceId();
   const spanId = transaction.contexts?.trace?.span_id || generateSpanId();
 
-  const serviceName = transaction.sdk?.name || 'sentry-app';
-  const startTime = transaction.start_timestamp
-    ? Math.floor(transaction.start_timestamp * 1000)
-    : Date.now();
-  const endTime = transaction.timestamp
-    ? Math.floor(transaction.timestamp * 1000)
-    : Date.now();
+  const serviceName = resolveServiceName(transaction);
+  const startTime = toEpochMs(transaction.start_timestamp) ?? Date.now();
+  const endTime = toEpochMs(transaction.timestamp) ?? Date.now();
 
   // Convert transaction to OTLP root span
   const rootSpan = {
@@ -140,19 +141,15 @@ function convertSentryTransaction(transaction: any): {
       ...transaction.tags,
     }),
     status: {
-      code: transaction.contexts?.trace?.status === 'ok' ? 1 : 2,
+      code: mapSentryStatus(transaction.contexts?.trace?.status),
       message: transaction.contexts?.trace?.status,
     },
   };
 
   // Convert child spans
   const childSpans = (transaction.spans || []).map((sentrySpan: any) => {
-    const spanStartTime = sentrySpan.start_timestamp
-      ? Math.floor(sentrySpan.start_timestamp * 1000)
-      : startTime;
-    const spanEndTime = sentrySpan.timestamp
-      ? Math.floor(sentrySpan.timestamp * 1000)
-      : endTime;
+    const spanStartTime = toEpochMs(sentrySpan.start_timestamp) ?? startTime;
+    const spanEndTime = toEpochMs(sentrySpan.timestamp) ?? endTime;
 
     return {
       traceId: traceId,
@@ -169,7 +166,8 @@ function convertSentryTransaction(transaction: any): {
         ...sentrySpan.data,
       }),
       status: {
-        code: sentrySpan.status === 'ok' ? 1 : 2,
+        code: mapSentryStatus(sentrySpan.status),
+        message: sentrySpan.status,
       },
     };
   });
@@ -241,14 +239,8 @@ function convertStreamedSpans(payload: any): {
  * Convert a single Sentry v2 streamed span to an OTLP span.
  */
 function streamedSpanToOtlp(span: any) {
-  const startTime =
-    typeof span.start_timestamp === 'number'
-      ? Math.floor(span.start_timestamp * 1000)
-      : Date.now();
-  const endTime =
-    typeof span.end_timestamp === 'number'
-      ? Math.floor(span.end_timestamp * 1000)
-      : startTime;
+  const startTime = toEpochMs(span.start_timestamp) ?? Date.now();
+  const endTime = toEpochMs(span.end_timestamp) ?? startTime;
 
   const op = readTypedAttr(span.attributes, 'sentry.op');
 
@@ -262,7 +254,7 @@ function streamedSpanToOtlp(span: any) {
     endTimeUnixNano: String(endTime * 1_000_000),
     attributes: convertTypedAttributes(span.attributes),
     status: {
-      code: span.status === 'error' ? 2 : span.status === 'ok' ? 1 : 0,
+      code: mapSentryStatus(span.status),
       message: span.status,
     },
     links: Array.isArray(span.links)
@@ -287,14 +279,9 @@ function convertStandaloneSpan(span: any): {
   if (!span || (!span.span_id && !span.trace_id))
     return { traces: [], spans: [] };
 
-  const startTime =
-    typeof span.start_timestamp === 'number'
-      ? Math.floor(span.start_timestamp * 1000)
-      : Date.now();
-  const endTime =
-    typeof span.timestamp === 'number'
-      ? Math.floor(span.timestamp * 1000)
-      : startTime;
+  const startTime = toEpochMs(span.start_timestamp) ?? Date.now();
+  const endTime = toEpochMs(span.timestamp) ?? startTime;
+  const serviceName = resolveServiceName(span);
 
   const otlpSpan = {
     traceId: span.trace_id,
@@ -311,7 +298,8 @@ function convertStandaloneSpan(span: any): {
       ...span.data,
     }),
     status: {
-      code: span.status === 'ok' ? 1 : 2,
+      code: mapSentryStatus(span.status),
+      message: span.status,
     },
   };
 
@@ -320,7 +308,7 @@ function convertStandaloneSpan(span: any): {
       {
         resource: {
           attributes: [
-            { key: 'service.name', value: { stringValue: 'sentry-app' } },
+            { key: 'service.name', value: { stringValue: serviceName } },
           ],
         },
         scopeSpans: [{ spans: [otlpSpan] }],
@@ -335,10 +323,8 @@ function convertStandaloneSpan(span: any): {
  * Convert Sentry error event to OTLP log
  */
 function convertSentryEvent(event: any): { logs: ParsedLog[] } {
-  const timestamp = event.timestamp
-    ? Math.floor(event.timestamp * 1000)
-    : Date.now();
-  const serviceName = event.sdk?.name || 'sentry-app';
+  const timestamp = toEpochMs(event.timestamp) ?? Date.now();
+  const serviceName = resolveServiceName(event);
 
   // Determine severity from Sentry level
   const severityMap: Record<string, number> = {
@@ -415,9 +401,7 @@ function convertSentryLog(logItem: any): { logs: ParsedLog[] } {
   const logs: ParsedLog[] = [];
 
   for (const log of items) {
-    const timestamp = log.timestamp
-      ? Math.floor(log.timestamp * 1000)
-      : Date.now();
+    const timestamp = toEpochMs(log.timestamp) ?? Date.now();
 
     // Map Sentry log level to OTLP severity
     const severityMap: Record<string, number> = {
@@ -472,6 +456,35 @@ function convertSentryLog(logItem: any): { logs: ParsedLog[] } {
   }
 
   return { logs };
+}
+
+/**
+ * Pick a service name for a Sentry event.
+ *
+ * `sdk.name` is the SDK identifier, not the app, so leaning on it alone
+ * collapses every Go service into a single "sentry.go" entry. Prefer an
+ * explicit `service.name` tag, then the host the SDK reported.
+ */
+function resolveServiceName(event: any): string {
+  return (
+    event.tags?.['service.name'] ||
+    event.data?.['service.name'] ||
+    event.server_name ||
+    event.sdk?.name ||
+    'sentry-app'
+  );
+}
+
+/**
+ * Map a Sentry span status to an OTLP status code.
+ *
+ * Sentry omits the status entirely when it was never set (the Go SDK tags it
+ * `omitempty`, so manually created spans arrive without one). That absence is
+ * UNSET, not an error, and collapsing it to ERROR paints every span red.
+ */
+function mapSentryStatus(status?: string): number {
+  if (!status || status === 'unknown') return 0; // UNSET
+  return status === 'ok' ? 1 : 2; // OK : ERROR
 }
 
 /**
@@ -576,9 +589,7 @@ function convertSentryTraceMetrics(payload: any): ParsedMetric[] {
 
   for (const item of items) {
     try {
-      const timestamp = item.timestamp
-        ? Math.floor(item.timestamp * 1000)
-        : Date.now();
+      const timestamp = toEpochMs(item.timestamp) ?? Date.now();
 
       const typeMap: Record<string, MetricType> = {
         counter: 'counter',
@@ -599,7 +610,11 @@ function convertSentryTraceMetrics(payload: any): ParsedMetric[] {
       if (item.trace_id) attributes['trace_id'] = item.trace_id;
       if (item.span_id) attributes['span_id'] = item.span_id;
 
-      const serviceName = String(attributes['sentry.sdk.name'] || 'sentry-app');
+      const serviceName = String(
+        attributes['service.name'] ||
+          attributes['sentry.sdk.name'] ||
+          'sentry-app',
+      );
 
       if (metricType === 'histogram') {
         const value = Number(item.value) || 0;
