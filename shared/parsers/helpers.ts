@@ -54,6 +54,35 @@ export function nanoToMs(nano: string | number): number {
 }
 
 /**
+ * Normalize a Sentry timestamp to epoch milliseconds, returning null when the
+ * value is missing or unparseable so callers can pick their own fallback.
+ *
+ * SDKs disagree on the wire format and Relay accepts both: the JS SDKs send
+ * fractional epoch seconds (1755079451.123), while the Go and Python SDKs send
+ * an RFC 3339 string ("2026-08-13T12:15:09.404523541-04:00"). Multiplying the
+ * latter by 1000 yields NaN, which then poisons every downstream duration.
+ */
+export function toEpochMs(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? Math.floor(value * 1000) : null;
+  }
+
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  // A numeric string is epoch seconds, same as the number case.
+  const seconds = Number(trimmed);
+  if (!Number.isNaN(seconds)) {
+    return Number.isFinite(seconds) ? Math.floor(seconds * 1000) : null;
+  }
+
+  const parsed = Date.parse(trimmed);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
  * Extract attribute value from OTLP KeyValue format
  */
 export function getAttributeValue(value: IKeyValue['value']): any {
