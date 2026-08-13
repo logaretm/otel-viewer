@@ -6,6 +6,16 @@ compatibility_flags = ["nodejs_compat"]
 [durable_objects]
 bindings = [{ name = "TELEMETRY_ROOM", class_name = "TelemetryRoom" }]
 
+# Sentry reads SENTRY_DSN / SENTRY_ENVIRONMENT off the env binding. Set the DSN
+# with `wrangler secret put SENTRY_DSN` (or as a plain var) so it stays out of
+# the repo; leaving it unset disables the SDK, which is what `wrangler dev` does.
+[vars]
+SENTRY_ENVIRONMENT = "production"
+
+# Gives Sentry a release to attribute events to, per deployed version.
+[version_metadata]
+binding = "CF_VERSION_METADATA"
+
 [[migrations]]
 tag = "v1"
 new_classes = ["TelemetryRoom"]

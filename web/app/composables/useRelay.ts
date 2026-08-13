@@ -1,5 +1,6 @@
 // Composable for relay communication via SharedWorker
 
+import * as Sentry from '@sentry/browser';
 import type { WebSocketMessage } from '../../../shared/parsers/types';
 
 type RelayStatus = 'disconnected' | 'connecting' | 'connected';
@@ -26,6 +27,11 @@ export function useRelay() {
 
     if (typeof SharedWorker === 'undefined') {
       console.error('[Relay] SharedWorker is not supported in this browser');
+      // The whole live-data path depends on this. Without it the dashboard
+      // loads and then silently never receives anything.
+      Sentry.logger.error('SharedWorker unsupported, relay unavailable', {
+        user_agent: navigator.userAgent,
+      });
       return;
     }
 
@@ -45,6 +51,9 @@ export function useRelay() {
 
       _worker.onerror = (error) => {
         console.error('[Relay] SharedWorker error:', error);
+        Sentry.logger.error('SharedWorker runtime error', {
+          message: error.message ?? 'unknown',
+        });
       };
 
       _port.start();
@@ -57,6 +66,7 @@ export function useRelay() {
       }
     } catch (error) {
       console.error('[Relay] Failed to create SharedWorker:', error);
+      Sentry.captureException(error, { tags: { area: 'relay-init' } });
     }
   };
 
@@ -65,14 +75,13 @@ export function useRelay() {
     const host = window.location.host;
     const wsUrl = `${protocol}//${host}/r/${roomId}?token=${receiveToken}`;
 
-    console.log('[Relay] connect() called');
-    console.log('[Relay] roomId:', roomId);
-    console.log('[Relay] receiveToken:', receiveToken);
-    console.log('[Relay] wsUrl:', wsUrl);
-    console.log('[Relay] _port:', _port);
+    // The receive token grants read access to the room and the URL embeds it,
+    // so neither is printed: Sentry turns console output into breadcrumbs.
+    console.log('[Relay] connect() called, room:', roomId.slice(0, 4) + '...');
 
     if (!_port) {
       console.error('[Relay] Cannot connect - port not initialized');
+      Sentry.logger.error('Relay connect failed: port not initialized');
       return;
     }
 
@@ -132,6 +141,9 @@ function handleWorkerMessage(msg: any, status: Ref<RelayStatus>) {
           callback(msg.payload);
         } catch (err) {
           console.error('[Relay] Error in data callback:', err);
+          // A throwing subscriber drops this update for every later subscriber
+          // too, so data goes missing without any visible failure.
+          Sentry.captureException(err, { tags: { area: 'relay-dispatch' } });
         }
       }
       break;

@@ -1,6 +1,7 @@
 // Composable for syncing incoming telemetry data to IndexedDB
 // This should be called once at the app level to ensure data is always captured
 
+import * as Sentry from '@sentry/browser';
 import type {
   Trace,
   Span,
@@ -115,6 +116,22 @@ export function useDataSync() {
   const handleMessage = async (message: WebSocketMessage) => {
     console.log('[DataSync] handleMessage:', message.type, message);
 
+    try {
+      await routeMessage(message);
+    } catch (err) {
+      // Every IndexedDB write happens under here and nothing awaits this
+      // handler, so a rejection is invisible: the telemetry arrived, was never
+      // stored, and the dashboard looks the same as if it was never sent.
+      console.error('[DataSync] Failed to persist update:', err);
+      Sentry.logger.error('Dropped an inbound telemetry update', {
+        message_type: message.type,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      Sentry.captureException(err, { tags: { area: 'data-sync' } });
+    }
+  };
+
+  const routeMessage = async (message: WebSocketMessage) => {
     switch (message.type) {
       case 'trace_update':
         if (message.data) {

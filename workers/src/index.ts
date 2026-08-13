@@ -1,5 +1,6 @@
 // Main Cloudflare Worker entry point
 
+import * as Sentry from '@sentry/cloudflare';
 import type { Env } from './types';
 import {
   parseSentryEnvelope,
@@ -16,11 +17,12 @@ import {
   isTraceRequest,
   isLogsRequest,
   isMetricsRequest,
+  roomTag,
 } from './util';
 
 export { TelemetryRoom } from './durable-object';
 
-export default {
+const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     console.log('[Worker] Request:', request.method, url.pathname);
@@ -39,6 +41,12 @@ export default {
       const roomId = extractRoomIdFromSentryAuth(request);
       console.log('[Worker] Extracted roomId:', roomId);
       if (!roomId) {
+        // A misconfigured DSN looks exactly like this: the SDK is sending, but
+        // nothing can be routed to a room, so nothing ever shows up.
+        Sentry.logger.warn('Sentry ingest rejected: no room ID in request', {
+          has_auth_header: request.headers.has('x-sentry-auth'),
+          user_agent: request.headers.get('user-agent') ?? 'unknown',
+        });
         return corsResponse(
           new Response('Missing room ID in X-Sentry-Auth', { status: 400 }),
         );
@@ -81,6 +89,24 @@ export default {
   },
 };
 
+export default Sentry.withSentry(
+  (env: Env) => ({
+    dsn: env.SENTRY_DSN,
+    environment: env.SENTRY_ENVIRONMENT,
+    release: env.CF_VERSION_METADATA?.id,
+    enableLogs: true,
+    tracesSampleRate: 1.0,
+    // Telemetry sent to a room belongs to whoever is being debugged, so keep
+    // request bodies and user info out of our own error reports.
+    sendDefaultPii: false,
+    dataCollection: {
+      userInfo: false,
+      httpBodies: [],
+    },
+  }),
+  handler,
+);
+
 async function handleSentryIngest(
   request: Request,
   env: Env,
@@ -93,6 +119,10 @@ async function handleSentryIngest(
     console.log('[Worker] Sentry envelope body length:', rawBody.length);
 
     if (!rawBody) {
+      Sentry.logger.warn('Sentry ingest rejected: empty envelope body', {
+        room: roomTag(roomId),
+        content_encoding: request.headers.get('content-encoding') ?? 'none',
+      });
       return new Response(JSON.stringify({ error: 'Empty envelope body' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -105,6 +135,34 @@ async function handleSentryIngest(
 
     // Convert Sentry data to OTLP format
     const result = processSentryEnvelope(envelope);
+
+    const sdk = envelope.headers.sdk?.name ?? 'unknown';
+    const itemTypes = envelope.items.map((item) => item.headers.type).join(',');
+    const yielded =
+      result.traces.length + result.logs.length + result.metrics.length;
+
+    if (yielded === 0) {
+      // The envelope parsed but converted to nothing. This is the shape every
+      // silent SDK incompatibility takes, so it is worth a warning rather than
+      // a success response nobody looks at.
+      Sentry.logger.warn('Sentry envelope yielded no telemetry', {
+        room: roomTag(roomId),
+        sdk,
+        sdk_version: envelope.headers.sdk?.version ?? 'unknown',
+        item_types: itemTypes,
+        item_count: envelope.items.length,
+      });
+    } else {
+      Sentry.logger.debug('Sentry envelope ingested', {
+        room: roomTag(roomId),
+        sdk,
+        item_types: itemTypes,
+        traces: result.traces.length,
+        spans: result.spans.length,
+        logs: result.logs.length,
+        metrics: result.metrics.length,
+      });
+    }
     console.log(
       '[Worker] Processed envelope, traces:',
       result.traces.length,
@@ -148,6 +206,11 @@ async function handleSentryIngest(
     });
   } catch (error: any) {
     console.error('[Sentry] Error:', error.message);
+    Sentry.logger.error('Sentry envelope failed to parse', {
+      room: roomTag(roomId),
+      error: error.message,
+    });
+    Sentry.captureException(error, { tags: { ingest: 'sentry' } });
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
@@ -228,6 +291,13 @@ async function handleOTLPIngest(
         },
       );
     } else {
+      // Signal names are the usual culprit: an exporter pointed at the wrong
+      // endpoint, or a protobuf body we never decoded.
+      Sentry.logger.warn('OTLP payload matched no known signal', {
+        room: roomTag(roomId),
+        body_keys: Object.keys(body).join(','),
+        content_type: request.headers.get('content-type') ?? 'none',
+      });
       return new Response(JSON.stringify({ error: 'Invalid OTLP payload' }), {
         status: 400,
         headers: { 'Content-Type': 'application/json' },
@@ -235,6 +305,11 @@ async function handleOTLPIngest(
     }
   } catch (error: any) {
     console.error('[OTLP] Error:', error.message);
+    Sentry.logger.error('OTLP ingest failed', {
+      room: roomTag(roomId),
+      error: error.message,
+    });
+    Sentry.captureException(error, { tags: { ingest: 'otlp' } });
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' },
@@ -277,4 +352,14 @@ async function broadcastToRoom(
     }),
   );
   console.log('[Worker] Durable Object response:', response.status);
+
+  if (!response.ok) {
+    // Ingest already returned 200 to the SDK by this point, so a failure here
+    // is invisible to the sender: data was accepted and then dropped.
+    Sentry.logger.error('Broadcast to room failed', {
+      room: roomTag(roomId),
+      message_type: data.type,
+      status: response.status,
+    });
+  }
 }
