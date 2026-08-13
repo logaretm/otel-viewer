@@ -95,7 +95,7 @@ export default Sentry.withSentry(
     environment: env.SENTRY_ENVIRONMENT,
     release: env.CF_VERSION_METADATA?.id,
     enableLogs: true,
-    tracesSampleRate: 1.0,
+    tracesSampleRate: 0.1,
     // Telemetry sent to a room belongs to whoever is being debugged, so keep
     // request bodies and user info out of our own error reports.
     sendDefaultPii: false,

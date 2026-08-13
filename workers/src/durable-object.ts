@@ -2,6 +2,7 @@
 
 import { DurableObject } from 'cloudflare:workers';
 import * as Sentry from '@sentry/cloudflare';
+import type { CloudflareOptions } from '@sentry/cloudflare';
 import type { Env } from './types';
 import { roomTag } from './util';
 
@@ -204,12 +205,16 @@ class TelemetryRoomBase extends DurableObject<Env> {
 }
 
 export const TelemetryRoom = Sentry.instrumentDurableObjectWithSentry(
-  (env: Env) => ({
+  (env: Env): CloudflareOptions => ({
     dsn: env.SENTRY_DSN,
     environment: env.SENTRY_ENVIRONMENT,
     release: env.CF_VERSION_METADATA?.id,
     enableLogs: true,
-    tracesSampleRate: 1.0,
+    // Every viewer sends a keepalive ping every 30s, and each one lands in
+    // webSocketMessage, so tracing that handler is one transaction per tab per
+    // half minute with nothing in it.
+    tracesSampler: ({ name, inheritOrSampleWith }) =>
+      name === 'webSocketMessage' ? 0 : inheritOrSampleWith(0.1),
     sendDefaultPii: false,
   }),
   TelemetryRoomBase,

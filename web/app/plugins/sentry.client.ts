@@ -30,7 +30,7 @@ export default defineNuxtPlugin((nuxtApp) => {
     environment: config.public.sentryEnvironment,
     release: config.public.cliVersion,
     enableLogs: true,
-    tracesSampleRate: 1.0,
+    tracesSampleRate: 0.1,
     // Telemetry in a room belongs to whoever is being debugged. Never let it,
     // or anything identifying its owner, ride along into our own project.
     sendDefaultPii: false,
