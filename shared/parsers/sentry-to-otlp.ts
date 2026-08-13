@@ -281,6 +281,7 @@ function convertStandaloneSpan(span: any): {
 
   const startTime = toEpochMs(span.start_timestamp) ?? Date.now();
   const endTime = toEpochMs(span.timestamp) ?? startTime;
+  const serviceName = resolveServiceName(span);
 
   const otlpSpan = {
     traceId: span.trace_id,
@@ -307,7 +308,7 @@ function convertStandaloneSpan(span: any): {
       {
         resource: {
           attributes: [
-            { key: 'service.name', value: { stringValue: 'sentry-app' } },
+            { key: 'service.name', value: { stringValue: serviceName } },
           ],
         },
         scopeSpans: [{ spans: [otlpSpan] }],
@@ -467,6 +468,7 @@ function convertSentryLog(logItem: any): { logs: ParsedLog[] } {
 function resolveServiceName(event: any): string {
   return (
     event.tags?.['service.name'] ||
+    event.data?.['service.name'] ||
     event.server_name ||
     event.sdk?.name ||
     'sentry-app'
@@ -608,7 +610,11 @@ function convertSentryTraceMetrics(payload: any): ParsedMetric[] {
       if (item.trace_id) attributes['trace_id'] = item.trace_id;
       if (item.span_id) attributes['span_id'] = item.span_id;
 
-      const serviceName = String(attributes['sentry.sdk.name'] || 'sentry-app');
+      const serviceName = String(
+        attributes['service.name'] ||
+          attributes['sentry.sdk.name'] ||
+          'sentry-app',
+      );
 
       if (metricType === 'histogram') {
         const value = Number(item.value) || 0;
