@@ -11,6 +11,7 @@ import {
   decodeLogsRequest,
   decodeMetricsRequest,
   detectOTLPSignal,
+  ProtoError,
 } from '../../shared/parsers';
 
 const CORS_HEADERS = {
@@ -121,15 +122,30 @@ export class OTLPDecodeError extends Error {
 export async function readOTLPRequest(request: Request): Promise<OTLPRequest> {
   const raw = new Uint8Array(await request.arrayBuffer());
 
+  let bytes: Uint8Array;
   try {
-    const bytes = await decompress(raw);
+    bytes = await decompress(raw);
+  } catch (error) {
+    // Everything this can throw is about the bytes themselves: a corrupt stream,
+    // or one that expands past the ceiling.
+    throw new OTLPDecodeError(decodeMessage(error), { cause: error });
+  }
+
+  try {
     return isJSON(request, bytes) ? readJSON(bytes) : readProtobuf(bytes);
   } catch (error) {
-    throw new OTLPDecodeError(
-      error instanceof Error ? error.message : 'undecodable OTLP body',
-      { cause: error },
-    );
+    // Only a malformed payload is the sender's fault. A bug of ours has to stay
+    // a 500 with an exception attached, or answering 400 to everything hides it
+    // the same way answering 500 to bad input used to hide theirs.
+    if (error instanceof ProtoError || error instanceof SyntaxError) {
+      throw new OTLPDecodeError(decodeMessage(error), { cause: error });
+    }
+    throw error;
   }
+}
+
+function decodeMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'undecodable OTLP body';
 }
 
 /**
@@ -186,6 +202,15 @@ function readProtobuf(bytes: Uint8Array): OTLPRequest {
 }
 
 /**
+ * Ingest is unauthenticated and gzip amplifies past 1000:1, so a few hundred
+ * kilobytes of crafted input would otherwise expand until the isolate hits its
+ * memory limit. Real OTLP batches are a few megabytes at the very most, and the
+ * ceiling has to be enforced while the stream is read: buffering first and
+ * measuring afterwards commits the memory we are trying not to spend.
+ */
+const MAX_DECOMPRESSED_BYTES = 16 * 1024 * 1024;
+
+/**
  * Sniffs the compression rather than trusting Content-Encoding, because the
  * header survives whatever the edge did to the body: a runtime that already
  * decompressed the request leaves the header in place, and an exporter that
@@ -197,10 +222,35 @@ async function decompress(bytes: Uint8Array): Promise<Uint8Array> {
   const format = compressionFormat(bytes);
   if (!format) return bytes;
 
-  const stream = new Blob([bytes as BlobPart])
+  const reader = new Blob([bytes as BlobPart])
     .stream()
-    .pipeThrough(new DecompressionStream(format));
-  return new Uint8Array(await new Response(stream).arrayBuffer());
+    .pipeThrough(new DecompressionStream(format))
+    .getReader();
+
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    size += value.byteLength;
+    if (size > MAX_DECOMPRESSED_BYTES) {
+      await reader.cancel();
+      throw new Error(
+        `decompressed body exceeds ${MAX_DECOMPRESSED_BYTES} bytes`,
+      );
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
 }
 
 function compressionFormat(bytes: Uint8Array): 'gzip' | 'deflate' | null {

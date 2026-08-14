@@ -777,8 +777,15 @@ function decodeHistogramDataPoint(reader: ProtoReader): HistogramDataPoint {
  * (dropped_events_count), or bytes at 4 (parent_span_id). A LogRecord is the
  * only one with a fixed64 at 1 or 11 (time, observed_time), a varint at 2
  * (severity_number) or 7 (dropped_attributes_count), or a fixed32 at 8 (flags).
- * A Metric carries none of those, so it is what is left: its own fields sit at
- * 1, 2, 3, 5, 7 and 9 through 12, all strings or nested messages.
+ * A Metric names itself with a string at 1 and carries one data field at 5, 7 or
+ * 9 through 11.
+ *
+ * Every branch asks for a marker it owns, and none of them is a fallback. Proto3
+ * omits every field left at its zero value, so a record can arrive carrying none
+ * of these: a LogRecord holding only a body and attributes is legal and looks
+ * like nothing in particular. Treating "not a span and not a log" as a metric
+ * would read that body as a gauge and store the result, so an unreadable record
+ * returns null and ingest answers 400 instead.
  */
 export function detectOTLPSignal(bytes: Uint8Array): OTLPSignal | null {
   const record = findFirstRecord(new ProtoReader(bytes));
@@ -813,7 +820,23 @@ export function detectOTLPSignal(bytes: Uint8Array): OTLPSignal | null {
     return 'logs';
   }
 
-  return 'metrics';
+  // Exponential histograms and summaries (10, 11) count as metric markers even
+  // though nothing downstream renders them yet. They decode to zero data points
+  // and get dropped on a 200, which is where an unsupported metric type belongs:
+  // calling it unreadable instead would answer 400 and leave the exporter
+  // retrying a batch that will never parse any differently.
+  if (
+    has(1, WIRE.LENGTH) &&
+    (has(5, WIRE.LENGTH) ||
+      has(7, WIRE.LENGTH) ||
+      has(9, WIRE.LENGTH) ||
+      has(10, WIRE.LENGTH) ||
+      has(11, WIRE.LENGTH))
+  ) {
+    return 'metrics';
+  }
+
+  return null;
 }
 
 /**

@@ -30,6 +30,11 @@ export interface ProtoTag {
 const BASE64_ALPHABET =
   'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
 
+// One decoder for the module: a batch holds a string per attribute key, per
+// attribute value, per span name and per scope name, so building one each time
+// allocates thousands per request. Stateless for one-shot decode calls.
+const TEXT_DECODER = new TextDecoder();
+
 export class ProtoReader {
   private readonly bytes: Uint8Array;
   private readonly view: DataView;
@@ -123,7 +128,7 @@ export class ProtoReader {
   }
 
   readString(): string {
-    return new TextDecoder().decode(this.readBytes());
+    return TEXT_DECODER.decode(this.readBytes());
   }
 
   /** A reader scoped to one length-delimited field, for nested messages. */

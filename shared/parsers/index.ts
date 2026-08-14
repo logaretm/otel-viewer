@@ -49,6 +49,7 @@ export {
 } from './otlp-parser';
 
 // OTLP protobuf decoding
+export { ProtoError } from './protobuf-reader';
 export {
   decodeTraceRequest,
   decodeLogsRequest,
