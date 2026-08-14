@@ -14,9 +14,8 @@ import {
   handleCORS,
   corsResponse,
   extractRoomIdFromSentryAuth,
-  isTraceRequest,
-  isLogsRequest,
-  isMetricsRequest,
+  readOTLPRequest,
+  OTLPDecodeError,
   roomTag,
 } from './util';
 
@@ -226,12 +225,10 @@ async function handleOTLPIngest(
   console.log('[Worker] handleOTLPIngest called, roomId:', roomId);
 
   try {
-    const body = (await request.json()) as Record<string, any>;
-    console.log('[Worker] OTLP body keys:', Object.keys(body));
+    const { encoding, signal, body } = await readOTLPRequest(request);
+    console.log('[Worker] OTLP payload:', encoding, signal ?? 'unrecognized');
 
-    // Detect if this is traces or logs based on the payload
-    if (isTraceRequest(body)) {
-      // OTLP Traces
+    if (signal === 'traces') {
       const result = parseOTLPTrace(body);
 
       for (const trace of result.traces) {
@@ -253,8 +250,7 @@ async function handleOTLPIngest(
           headers: { 'Content-Type': 'application/json' },
         },
       );
-    } else if (isLogsRequest(body)) {
-      // OTLP Logs
+    } else if (signal === 'logs') {
       const result = parseOTLPLogs(body);
 
       for (const log of result.logs) {
@@ -270,8 +266,7 @@ async function handleOTLPIngest(
           headers: { 'Content-Type': 'application/json' },
         },
       );
-    } else if (isMetricsRequest(body)) {
-      // OTLP Metrics
+    } else if (signal === 'metrics') {
       const result = parseOTLPMetrics(body);
 
       for (const metric of result.metrics) {
@@ -291,11 +286,12 @@ async function handleOTLPIngest(
         },
       );
     } else {
-      // Signal names are the usual culprit: an exporter pointed at the wrong
-      // endpoint, or a protobuf body we never decoded.
+      // An exporter pointed at the wrong endpoint is the usual culprit. An
+      // empty batch lands here too, so this stays a 400: retrying it would only
+      // replay the same payload.
       Sentry.logger.warn('OTLP payload matched no known signal', {
         room: roomTag(roomId),
-        body_keys: Object.keys(body).join(','),
+        encoding,
         content_type: request.headers.get('content-type') ?? 'none',
       });
       return new Response(JSON.stringify({ error: 'Invalid OTLP payload' }), {
@@ -304,6 +300,23 @@ async function handleOTLPIngest(
       });
     }
   } catch (error: any) {
+    // A body we cannot decode is the sender's problem, and answering 500 makes
+    // it ours: the exporter retries the same bytes on a backoff and each round
+    // trip files another error report. 400 stops the loop at the source.
+    if (error instanceof OTLPDecodeError) {
+      console.error('[OTLP] Undecodable body:', error.message);
+      Sentry.logger.warn('OTLP ingest rejected: undecodable body', {
+        room: roomTag(roomId),
+        error: error.message,
+        content_type: request.headers.get('content-type') ?? 'none',
+        user_agent: request.headers.get('user-agent') ?? 'unknown',
+      });
+      return new Response(
+        JSON.stringify({ error: `Malformed OTLP payload: ${error.message}` }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      );
+    }
+
     console.error('[OTLP] Error:', error.message);
     Sentry.logger.error('OTLP ingest failed', {
       room: roomTag(roomId),

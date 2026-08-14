@@ -48,6 +48,15 @@ export {
   type ParsedMetricsResult,
 } from './otlp-parser';
 
+// OTLP protobuf decoding
+export {
+  decodeTraceRequest,
+  decodeLogsRequest,
+  decodeMetricsRequest,
+  detectOTLPSignal,
+  type OTLPSignal,
+} from './otlp-protobuf';
+
 // Sentry to OTLP converter
 export {
   processSentryEnvelope,
