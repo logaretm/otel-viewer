@@ -4,6 +4,14 @@ import type {
   IExportTraceServiceRequest,
   IExportLogsServiceRequest,
   IExportMetricsServiceRequest,
+  OTLPSignal,
+} from '../../shared/parsers';
+import {
+  decodeTraceRequest,
+  decodeLogsRequest,
+  decodeMetricsRequest,
+  detectOTLPSignal,
+  ProtoError,
 } from '../../shared/parsers';
 
 const CORS_HEADERS = {
@@ -75,4 +83,183 @@ export function isMetricsRequest(
   body: Record<string, any>,
 ): body is IExportMetricsServiceRequest {
   return Array.isArray(body.resourceMetrics);
+}
+
+export type OTLPEncoding = 'json' | 'protobuf';
+
+export type OTLPRequest =
+  | {
+      encoding: OTLPEncoding;
+      signal: 'traces';
+      body: IExportTraceServiceRequest;
+    }
+  | { encoding: OTLPEncoding; signal: 'logs'; body: IExportLogsServiceRequest }
+  | {
+      encoding: OTLPEncoding;
+      signal: 'metrics';
+      body: IExportMetricsServiceRequest;
+    }
+  | { encoding: OTLPEncoding; signal: null; body: null };
+
+/**
+ * Thrown when a body cannot be decoded at all. Kept distinct from the errors we
+ * raise ourselves so ingest can answer a bad payload with a 400 instead of a
+ * 500: an exporter that retries a 500 will resend the same undecodable bytes
+ * forever, and every attempt costs us another error report.
+ */
+export class OTLPDecodeError extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'OTLPDecodeError';
+  }
+}
+
+/**
+ * Reads an OTLP request in whichever encoding it arrived in and reports which
+ * signal it carries. A null signal means the payload decoded but held no records
+ * we recognise, which is a client mistake rather than a server fault.
+ */
+export async function readOTLPRequest(request: Request): Promise<OTLPRequest> {
+  const raw = new Uint8Array(await request.arrayBuffer());
+
+  let bytes: Uint8Array;
+  try {
+    bytes = await decompress(raw);
+  } catch (error) {
+    // Everything this can throw is about the bytes themselves: a corrupt stream,
+    // or one that expands past the ceiling.
+    throw new OTLPDecodeError(decodeMessage(error), { cause: error });
+  }
+
+  try {
+    return isJSON(request, bytes) ? readJSON(bytes) : readProtobuf(bytes);
+  } catch (error) {
+    // Only a malformed payload is the sender's fault. A bug of ours has to stay
+    // a 500 with an exception attached, or answering 400 to everything hides it
+    // the same way answering 500 to bad input used to hide theirs.
+    if (error instanceof ProtoError || error instanceof SyntaxError) {
+      throw new OTLPDecodeError(decodeMessage(error), { cause: error });
+    }
+    throw error;
+  }
+}
+
+function decodeMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'undecodable OTLP body';
+}
+
+/**
+ * Content-Type decides, but only when it says something we recognise: exporters
+ * do send protobuf under a bare `application/octet-stream`, and getting this
+ * wrong used to mean a 500. The body itself is the tiebreaker, since a JSON
+ * payload can only start with `{`.
+ */
+function isJSON(request: Request, bytes: Uint8Array): boolean {
+  const contentType = request.headers.get('content-type')?.toLowerCase() ?? '';
+  if (contentType.includes('protobuf')) return false;
+  if (contentType.includes('json')) return true;
+
+  let i = 0;
+  while (i < bytes.length && bytes[i] <= 0x20) i++;
+  return bytes[i] === 0x7b; // '{'
+}
+
+function readJSON(bytes: Uint8Array): OTLPRequest {
+  const body = JSON.parse(new TextDecoder().decode(bytes)) as Record<
+    string,
+    any
+  >;
+
+  if (isTraceRequest(body)) return { encoding: 'json', signal: 'traces', body };
+  if (isLogsRequest(body)) return { encoding: 'json', signal: 'logs', body };
+  if (isMetricsRequest(body)) {
+    return { encoding: 'json', signal: 'metrics', body };
+  }
+  return { encoding: 'json', signal: null, body: null };
+}
+
+function readProtobuf(bytes: Uint8Array): OTLPRequest {
+  const signal: OTLPSignal | null = detectOTLPSignal(bytes);
+
+  switch (signal) {
+    case 'traces':
+      return {
+        encoding: 'protobuf',
+        signal,
+        body: decodeTraceRequest(bytes),
+      };
+    case 'logs':
+      return { encoding: 'protobuf', signal, body: decodeLogsRequest(bytes) };
+    case 'metrics':
+      return {
+        encoding: 'protobuf',
+        signal,
+        body: decodeMetricsRequest(bytes),
+      };
+    default:
+      return { encoding: 'protobuf', signal: null, body: null };
+  }
+}
+
+/**
+ * Ingest is unauthenticated and gzip amplifies past 1000:1, so a few hundred
+ * kilobytes of crafted input would otherwise expand until the isolate hits its
+ * memory limit. Real OTLP batches are a few megabytes at the very most, and the
+ * ceiling has to be enforced while the stream is read: buffering first and
+ * measuring afterwards commits the memory we are trying not to spend.
+ */
+const MAX_DECOMPRESSED_BYTES = 16 * 1024 * 1024;
+
+/**
+ * Sniffs the compression rather than trusting Content-Encoding, because the
+ * header survives whatever the edge did to the body: a runtime that already
+ * decompressed the request leaves the header in place, and an exporter that
+ * compressed without announcing it leaves the header off. The magic bytes are
+ * the only thing that describes the bytes we actually hold, and neither prefix
+ * can begin a valid OTLP payload.
+ */
+async function decompress(bytes: Uint8Array): Promise<Uint8Array> {
+  const format = compressionFormat(bytes);
+  if (!format) return bytes;
+
+  const reader = new Blob([bytes as BlobPart])
+    .stream()
+    .pipeThrough(new DecompressionStream(format))
+    .getReader();
+
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+
+    size += value.byteLength;
+    if (size > MAX_DECOMPRESSED_BYTES) {
+      await reader.cancel();
+      throw new Error(
+        `decompressed body exceeds ${MAX_DECOMPRESSED_BYTES} bytes`,
+      );
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body;
+}
+
+function compressionFormat(bytes: Uint8Array): 'gzip' | 'deflate' | null {
+  if (bytes.length < 2) return null;
+  if (bytes[0] === 0x1f && bytes[1] === 0x8b) return 'gzip';
+  // zlib: low nibble 8 marks deflate, and the two-byte header is a multiple of
+  // 31. Protobuf would need field 15 as a varint to collide, and OTLP has none.
+  if ((bytes[0] & 0x0f) === 0x08 && ((bytes[0] << 8) | bytes[1]) % 31 === 0) {
+    return 'deflate';
+  }
+  return null;
 }

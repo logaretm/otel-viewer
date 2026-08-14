@@ -75,7 +75,7 @@ Sentry.init({
 
 Sentry transactions become traces and errors become logs, converted to OTLP automatically. They show up tagged with a `SENTRY` badge.
 
-### OpenTelemetry (OTLP over HTTP/JSON)
+### OpenTelemetry (OTLP over HTTP)
 
 Export to `https://teley.dev/r/<room-id>`:
 
@@ -93,7 +93,7 @@ provider.addSpanProcessor(
 provider.register();
 ```
 
-> Use the HTTP/JSON exporter (`-otlp-http`), not protobuf.
+> Both encodings work: send JSON or protobuf, gzipped or not, to the same URL. Traces, logs and metrics all go to that one endpoint, so point every exporter at it.
 
 <details>
 <summary>Python, and pointing at a local worker</summary>

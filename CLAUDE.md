@@ -45,6 +45,8 @@ app/
 shared/parsers/              # Framework-agnostic parsing (used by both client & worker)
 ├── types.ts                 # Core domain types (Trace, Span, Log, Metric, WebSocketMessage)
 ├── otlp-parser.ts           # Parse OTLP protocol (traces/logs/metrics)
+├── otlp-protobuf.ts         # Decode OTLP/protobuf into the same shapes as OTLP/JSON
+├── protobuf-reader.ts       # Minimal protobuf wire-format reader (no dependencies)
 ├── sentry-parser.ts         # Parse Sentry envelopes
 ├── sentry-to-otlp.ts        # Convert Sentry → unified OTLP format
 ├── helpers.ts               # Hex conversion, nano→ms, attribute parsing
@@ -143,7 +145,7 @@ credentials: key (stores roomId, receiveToken)
 
 | Endpoint                    | Method    | Purpose                        |
 | --------------------------- | --------- | ------------------------------ |
-| `/r/{roomId}`               | POST      | OTLP trace/log/metric ingest   |
+| `/r/{roomId}`               | POST      | OTLP ingest (JSON or protobuf) |
 | `/r/{roomId}`               | WebSocket | Real-time relay connection     |
 | `/api/{projectId}/envelope` | POST      | Sentry envelope ingest         |
 | `/api/share`                | POST      | Store trace snapshot (24h TTL) |
