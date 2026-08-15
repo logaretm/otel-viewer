@@ -18,10 +18,14 @@ import { METRIC, redactUrl } from '../../shared/observability';
 
 export { TelemetryRoom } from './durable-object';
 
+// Suffixes an exporter realistically appends, kept apart from everything else.
+const OTLP_SIGNAL_PATHS = new Set(['/v1/traces', '/v1/logs', '/v1/metrics']);
+
 const handler = {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     console.log('[Worker] Request:', request.method, url.pathname);
+    nameRequestSpan(request, url);
 
     // CORS preflight
     if (request.method === 'OPTIONS') {
@@ -77,20 +81,25 @@ const handler = {
     // recorded nothing, so the most common setup mistake was invisible on both
     // ends: the SDK swallows the response and we never heard about it.
     if (request.method === 'POST') {
-      const suffix = url.pathname.match(/^\/r\/[a-zA-Z0-9_-]+(\/.*)$/)?.[1];
+      const path = url.pathname.match(/^\/r\/[a-zA-Z0-9_-]+(\/.*)$/)?.[1];
+      // Ingest is public and unauthenticated, so this attribute is
+      // attacker-controlled: anything posting /r/{id}/<random> would mint a
+      // metric series per path and file a log per request. Only the suffixes
+      // worth diagnosing are kept.
+      const suffix = path && OTLP_SIGNAL_PATHS.has(path) ? path : 'other';
       Sentry.metrics.count(METRIC.INGEST_UNROUTED, 1, {
-        attributes: { surface: 'worker', suffix: suffix ?? 'other' },
+        attributes: { surface: 'worker', suffix },
       });
       Sentry.logger.warn('Ingest request matched no route', {
-        suffix: suffix ?? 'other',
+        suffix,
         content_type: request.headers.get('content-type') ?? 'none',
         user_agent: request.headers.get('user-agent') ?? 'unknown',
       });
       return corsResponse(
         new Response(
           JSON.stringify({
-            error: suffix
-              ? `No ingest route for ${suffix}. Post OTLP to /r/{roomId} itself; OTEL_EXPORTER_OTLP_ENDPOINT appends the signal path, so use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or the exporter's url option.`
+            error: path
+              ? `No ingest route for ${path}. Post OTLP to /r/{roomId} itself; OTEL_EXPORTER_OTLP_ENDPOINT appends the signal path, so use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or the exporter's url option.`
               : 'No ingest route',
           }),
           { status: 404, headers: { 'Content-Type': 'application/json' } },
@@ -118,6 +127,30 @@ const handler = {
     return new Response('Not Found', { status: 404 });
   },
 };
+
+/**
+ * The SDK names the request span after the raw path, and the room ID is a path
+ * segment: an ingest credential in every span it sends. Rather than scrub spans
+ * on the way out, the name is set here, where the request arrives, to the route
+ * that produced it. Templated names are what a span name should be anyway,
+ * since raw paths make one group per room.
+ */
+function nameRequestSpan(request: Request, url: URL): void {
+  const span = Sentry.getActiveSpan();
+  if (!span) return;
+
+  const route = url.pathname
+    .replace(/^\/r\/[a-zA-Z0-9_-]+/, '/r/:roomId')
+    .replace(/^\/api\/\d+\/envelope/, '/api/:projectId/envelope');
+
+  Sentry.updateSpanName(span, `${request.method} ${route}`);
+  // url.full and url.path were set from the real URL when the span opened.
+  span.setAttributes({
+    'url.full': redactUrl(request.url),
+    'url.path': route,
+    'url.query': '',
+  });
+}
 
 // Volume and shape only: how many records, of which signal, in which encoding.
 function accepted(
@@ -174,15 +207,6 @@ export default Sentry.withSentry(
       }
       return event;
     },
-
-    beforeSendSpan(span) {
-      if (typeof span.description === 'string') {
-        span.description = redactUrl(span.description);
-      }
-      const url = span.data?.['url'];
-      if (typeof url === 'string') span.data['url'] = redactUrl(url);
-      return span;
-    },
   }),
   handler,
 );
@@ -233,7 +257,17 @@ async function handleSentryIngest(
         item_count: envelope.items.length,
       });
     } else {
-      accepted('sentry', 'traces', 'json', result.traces.length);
+      // This branch is reached when any signal is non-empty, so counting it all
+      // as `traces` mislabels a logs-only envelope and records zero records.
+      if (result.traces.length > 0) {
+        accepted('sentry', 'traces', 'json', result.traces.length);
+      }
+      if (result.logs.length > 0) {
+        accepted('sentry', 'logs', 'json', result.logs.length);
+      }
+      if (result.metrics.length > 0) {
+        accepted('sentry', 'metrics', 'json', result.metrics.length);
+      }
       Sentry.logger.debug('Sentry envelope ingested', {
         room: roomTag(roomId),
         sdk,

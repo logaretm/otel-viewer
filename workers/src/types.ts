@@ -11,6 +11,18 @@ export interface Env {
   CF_VERSION_METADATA?: { id: string; tag?: string };
 }
 
+// The Sentry SDK types its wrappers against Cloudflare's ambient Env, which is
+// empty unless `wrangler types` generates it. Declaring our bindings into that
+// namespace keeps this file the single source of truth without committing a
+// half-megabyte of generated types.
+declare global {
+  namespace Cloudflare {
+    interface Env extends TeleyEnv {}
+  }
+}
+
+type TeleyEnv = Env;
+
 export interface Session {
   id: string;
   ws: WebSocket;

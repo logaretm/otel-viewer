@@ -230,7 +230,18 @@ export const TelemetryRoom = Sentry.instrumentDurableObjectWithSentry(
     // half minute with nothing in it.
     tracesSampler: ({ name, inheritOrSampleWith }) =>
       name === 'webSocketMessage' ? 0 : inheritOrSampleWith(0.1),
-    sendDefaultPii: false,
+    // v11 removed sendDefaultPii, and its replacement defaults to collecting
+    // request data. Nothing about a room's telemetry belongs in our project.
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      urlQueryParams: false,
+      httpHeaders: { request: false, response: false },
+      httpBodies: [],
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+      graphQL: { document: false, variables: false },
+    },
   }),
   TelemetryRoomBase,
 );
