@@ -193,9 +193,10 @@ pnpm changeset --empty  # record that a change ships nothing user-visible
 pnpm changeset:status   # what would be released right now
 ```
 
-Any PR touching `cli/` or `shared/` must add a changeset (`shared/parsers` is
-bundled into the CLI, so it ships to npm too). CI enforces this, and the empty
-changeset is the escape hatch.
+Every PR must add a changeset, and CI enforces it as a required check. Only
+`cli/` and `shared/` ship to npm (`shared/parsers` is bundled into the CLI), so
+a PR touching anything else takes an empty changeset. Reach for `--empty`
+whenever a change ships nothing user-visible.
 
 Merging a changeset does not release. `changesets/action` opens and keeps
 updating a `chore(cli): release` PR carrying the accumulated version bump and
