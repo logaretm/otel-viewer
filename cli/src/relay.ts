@@ -4,6 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import type { Trace, Span, Log, TraceEntry, WebSocketMessage } from './types';
+import type { TelemetrySource } from './source';
 import { summarizeTrace } from '../../shared/parsers/trace-summary';
 
 // 'rejected' is terminal: the relay refused the handshake (room already claimed
@@ -291,7 +292,9 @@ export interface LiveData {
   clear: () => void;
 }
 
-export function useLiveData(wsUrl: string): LiveData {
+// `source` must be stable across renders (built once at startup): it is the
+// effect's only dependency, so a new one on every render would reconnect.
+export function useLiveData(source: TelemetrySource): LiveData {
   const [status, setStatus] = useState<RelayStatus>('connecting');
   const [error, setError] = useState<string | null>(null);
   const [viewers, setViewers] = useState(0);
@@ -302,9 +305,9 @@ export function useLiveData(wsUrl: string): LiveData {
   useEffect(() => {
     setError(null);
     const rerender = () => bump((n) => n + 1);
-    const relay = createRelay(wsUrl, {
+    const handle = source({
       onStatus: setStatus,
-      onReject: setError,
+      onFail: setError,
       onViewerCount: setViewers,
       onTrace: (trace, spans) => {
         traceStore.current.upsert(trace, spans);
@@ -320,8 +323,8 @@ export function useLiveData(wsUrl: string): LiveData {
         rerender();
       },
     });
-    return () => relay.close();
-  }, [wsUrl]);
+    return () => handle.close();
+  }, [source]);
 
   return {
     status,

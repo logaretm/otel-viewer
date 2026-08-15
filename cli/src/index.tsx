@@ -3,11 +3,14 @@ import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { LiveApp, DemoApp } from './App';
 import { loadOrCreateSession, resolveEndpoints } from './session';
+import { relaySource } from './source';
 import { runStream } from './stream';
 import pkg from '../package.json' with { type: 'json' };
 
 // Deployed relay host. Override with --host / $TELEY_HOST (e.g. localhost:8787 for local dev).
 const DEFAULT_HOST = 'teley.dev';
+// Ingest port for --local. 8787 is the worker's dev port, so this sits beside it.
+const DEFAULT_LOCAL_PORT = 8788;
 
 interface Args {
   command: 'tui' | 'mcp';
@@ -15,6 +18,8 @@ interface Args {
   fresh: boolean;
   demo: boolean;
   json: boolean;
+  local: boolean;
+  port: number;
   help: boolean;
   version: boolean;
 }
@@ -26,6 +31,8 @@ function parseArgs(argv: string[]): Args {
     fresh: false,
     demo: false,
     json: false,
+    local: false,
+    port: DEFAULT_LOCAL_PORT,
     help: false,
     version: false,
   };
@@ -44,6 +51,14 @@ function parseArgs(argv: string[]): Args {
       args.demo = true;
     } else if (arg === '--json') {
       args.json = true;
+    } else if (arg === '--local') {
+      args.local = true;
+    } else if (arg === '--port') {
+      args.port = Number(argv[++i] ?? args.port);
+      args.local = true;
+    } else if (arg.startsWith('--port=')) {
+      args.port = Number(arg.slice('--port='.length));
+      args.local = true;
     } else if (arg === '--help' || arg === '-h') {
       args.help = true;
     } else if (arg === '--version' || arg === '-v') {
@@ -64,12 +79,17 @@ Options:
   --new           Start a fresh room (new DSN), ignoring the saved session
   --demo          Render sample traces without connecting
   --json          Stream newline-delimited JSON to stdout instead of the TUI
+  --local         Receive telemetry on this machine, with no relay involved
+  --port <port>   Ingest port for --local (default: ${DEFAULT_LOCAL_PORT}, 0 picks a free one)
   -v, --version   Show the version number
   -h, --help      Show this help
 
 Point your app's OpenTelemetry/Sentry SDK at the DSN shown in the header.
 With --json the DSN is the first line on stdout, and every trace, log, and
-status change follows as one JSON object per line.`;
+status change follows as one JSON object per line.
+
+--local makes this process the ingest endpoint, so nothing leaves the machine.
+The web dashboard cannot open a local room; the terminal and MCP work the same.`;
 
 const args = parseArgs(process.argv.slice(2));
 
@@ -84,7 +104,33 @@ if (args.help) {
 }
 
 const session = loadOrCreateSession(args.fresh);
-const endpoints = resolveEndpoints(args.host, session);
+
+// --local binds the ingest port up front, so a collision is a clear message
+// here rather than a stack trace from inside whichever mode starts next. The
+// bound port decides the endpoints, since --port 0 lets the OS pick.
+async function resolveSource() {
+  if (!args.local) {
+    const endpoints = resolveEndpoints(args.host, session);
+    return { endpoints, source: relaySource(endpoints.wsUrl) };
+  }
+
+  const { createLocalIngest } = await import('./local-server');
+  try {
+    const ingest = createLocalIngest(args.port);
+    return {
+      endpoints: resolveEndpoints(`localhost:${ingest.port}`, session, true),
+      source: ingest.source,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(
+      `teley: could not listen on port ${args.port} (${reason}). Pass --port to pick another, or --port 0 for any free one.`,
+    );
+    process.exit(1);
+  }
+}
+
+const { endpoints, source } = await resolveSource();
 
 async function runTui() {
   // Own Ctrl-C ourselves so quit always runs the same graceful teardown as `q`,
@@ -109,16 +155,22 @@ async function runTui() {
     args.demo ? (
       <DemoApp endpoints={endpoints} onQuit={shutdown} />
     ) : (
-      <LiveApp endpoints={endpoints} onQuit={shutdown} />
+      <LiveApp endpoints={endpoints} source={source} onQuit={shutdown} />
     ),
   );
 }
 
 if (args.command === 'mcp') {
   const { runMcp } = await import('./mcp');
-  runMcp(endpoints, session, pkg.version);
+  runMcp(endpoints, session, source, pkg.version);
 } else if (args.json) {
-  runStream({ endpoints, session, version: pkg.version, demo: args.demo });
+  runStream({
+    endpoints,
+    session,
+    source,
+    version: pkg.version,
+    demo: args.demo,
+  });
 } else {
   await runTui();
 }

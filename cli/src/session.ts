@@ -39,6 +39,9 @@ export function loadOrCreateSession(fresh = false): Session {
 export interface Endpoints {
   host: string;
   secure: boolean;
+  // True when this process is the ingest endpoint (--local): no relay, and no
+  // web app or second device can reach the room.
+  local: boolean;
   dsn: string; // Sentry DSN (public key = roomId)
   otlp: string; // OTLP HTTP ingest endpoint
   wsUrl: string; // WebSocket relay (carries the receive token)
@@ -55,7 +58,11 @@ function isLocal(host: string): boolean {
   );
 }
 
-export function resolveEndpoints(host: string, session: Session): Endpoints {
+export function resolveEndpoints(
+  host: string,
+  session: Session,
+  local = false,
+): Endpoints {
   const secure = !isLocal(host);
   const http = secure ? 'https' : 'http';
   const ws = secure ? 'wss' : 'ws';
@@ -63,6 +70,7 @@ export function resolveEndpoints(host: string, session: Session): Endpoints {
   return {
     host,
     secure,
+    local,
     dsn: `${http}://${session.roomId}@${host}/0`,
     otlp: `${http}://${host}/r/${session.roomId}`,
     wsUrl: `${ws}://${host}/r/${session.roomId}?token=${session.receiveToken}`,

@@ -12,7 +12,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod';
 import { createRoom, type Room } from './room';
-import { relaySource } from './source';
+import type { TelemetrySource } from './source';
 import { buildSpanTree } from './span-tree';
 import {
   formatDuration,
@@ -164,7 +164,9 @@ export function buildMcpServer(
           `host: ${endpoints.host}`,
           '',
           'Traces, logs, and metrics all go to the OTLP endpoint (JSON or protobuf).',
-          'The same room is open in the Teley web app and the teley TUI.',
+          endpoints.local
+            ? 'This room is local to this machine: telemetry never leaves it, and no relay or web app is involved.'
+            : 'The same room is open in the Teley web app and the teley TUI.',
         ].join('\n'),
       ),
   );
@@ -349,11 +351,12 @@ export function buildMcpServer(
 export function runMcp(
   endpoints: Endpoints,
   session: Session,
+  source: TelemetrySource,
   version: string,
 ) {
   // Record from process start, not from the first tool call, so traces sent
   // while the agent is still thinking are not lost.
-  const room = createRoom(relaySource(endpoints.wsUrl));
+  const room = createRoom(source);
   console.error(
     `teley mcp: watching room ${session.roomId} on ${endpoints.host}`,
   );
