@@ -40,7 +40,6 @@ export function processSentryEnvelope(
 
   for (const item of envelope.items) {
     const itemType = item.headers.type;
-    console.log('[Sentry] Processing item type:', itemType);
 
     try {
       switch (itemType) {
@@ -61,7 +60,6 @@ export function processSentryEnvelope(
 
         case 'log': {
           // Sentry log item -> OTLP log
-          console.log('[Sentry] Log payload:', JSON.stringify(item.payload));
           const parsed = convertSentryLog(item.payload);
           result.logs.push(...parsed.logs);
           break;

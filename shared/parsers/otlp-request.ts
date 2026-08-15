@@ -1,7 +1,7 @@
 // Reading an OTLP request off the wire: decompression, encoding detection, and
 // signal detection, before the per-signal parsers take over.
 //
-// Web-standard only (Request, Blob, DecompressionStream), so the Cloudflare
+// Web-standard only (Request, ReadableStream, DecompressionStream), so the Cloudflare
 // worker and the CLI's local ingest server share one path rather than growing
 // two that drift.
 
@@ -196,8 +196,16 @@ async function decompress(bytes: Uint8Array): Promise<Uint8Array> {
   const format = compressionFormat(bytes);
   if (!format) return bytes;
 
-  const reader = new Blob([bytes as BlobPart])
-    .stream()
+  // Fed through a stream rather than a Blob so this compiles against the
+  // worker, Bun, and DOM type sets alike: BlobPart is not global in all three.
+  const source = new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+
+  const reader = source
     .pipeThrough(new DecompressionStream(format))
     .getReader();
 

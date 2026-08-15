@@ -24,6 +24,7 @@
   <a href="#-what-you-get">Features</a> •
   <a href="#%EF%B8%8F-keys">Keys</a> •
   <a href="#-json-output">JSON output</a> •
+  <a href="#-local-mode">Local mode</a> •
   <a href="#-coding-agents-mcp">MCP</a> •
   <a href="#-how-it-connects">How it connects</a>
 </p>
@@ -45,6 +46,7 @@ bunx teley-cli --new                   # start a fresh room (new DSN)
 bunx teley-cli --host localhost:8787   # point at a local worker
 bunx teley-cli --json                  # no TUI, newline-delimited JSON on stdout
 bunx teley-cli mcp                     # serve the room to a coding agent over MCP
+bunx teley-cli --local                 # receive telemetry here, no relay involved
 ```
 
 The DSN and OTLP endpoint are printed in the header. Point your SDK at either one, run your app, and spans appear.
@@ -77,6 +79,7 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 - **Sessions that persist.** Your room is reused across runs, so a restart does not invalidate the DSN you configured.
 - **Pipeable.** `--json` drops the TUI and streams the room as newline-delimited JSON, for `jq`, a file, or CI.
 - **Readable by agents.** `teley mcp` hands the same room to a coding agent as MCP tools, so it can run your app and read the span tree back.
+- **Offline if you want.** `--local` makes the CLI the ingest endpoint, so telemetry never leaves your machine.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-span-details.png" alt="Span attributes panel next to the waterfall" width="100%">
@@ -122,6 +125,27 @@ The first line is the session, so a script can read the DSN it should point an S
 `trace` and `log` carry the same shapes the web app uses (`shared/parsers/types.ts`). A trace appears on a new line every time more of it arrives: `trace` is the running summary over every span seen so far, while `spans` holds only the spans from that update, so lines never repeat a span.
 
 Nothing else is written to stdout. Connection state stays out of the stream, and a fatal error (a room already claimed by another token) goes to stderr with exit code 1. `ctrl-c` exits 0.
+
+## 🔒 Local mode
+
+`--local` makes this process the ingest endpoint. Your app posts OTLP or Sentry envelopes straight to it on localhost, and no relay is involved at all.
+
+```bash
+bunx teley-cli --local               # ingest on 127.0.0.1:8788
+bunx teley-cli --local --port 4318   # the conventional OTLP/HTTP port
+bunx teley-cli --local --port 0      # let the OS pick, printed in the header
+bunx teley-cli mcp --local           # same, serving an agent
+```
+
+The DSN and OTLP endpoint in the header point at that port, so pointing an SDK at it is the same gesture as always:
+
+```bash
+OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8788/r/<room-id> npm start
+```
+
+Telemetry never leaves the machine, there is nothing to deploy or reach, and there is no room to claim, so the "room already claimed" failure cannot happen. Ingest runs the same decoding the worker does (JSON or protobuf, gzip or not, Sentry envelopes), so what you see matches what the relay would have shown.
+
+The trade: a local room has no relay behind it, so the web dashboard cannot open it, and no second device or browser tab can watch along. `--local` composes with everything else here, so the TUI, `--json`, and `mcp` all work the same way.
 
 ## 🤖 Coding agents (MCP)
 

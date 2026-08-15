@@ -3,18 +3,20 @@ import { Dashboard } from './components/Dashboard';
 import { useLiveData } from './relay';
 import { MOCK_TRACES, buildMockLogs } from './mock-data';
 import type { Endpoints } from './session';
+import type { TelemetrySource } from './source';
 
-// Live mode: connects to the relay WebSocket and streams real traces + logs.
+// Live mode: streams real traces + logs from the room's source (the relay, or
+// the local ingest server under --local).
 export function LiveApp({
   endpoints,
+  source,
   onQuit,
 }: {
   endpoints: Endpoints;
+  source: TelemetrySource;
   onQuit: () => void;
 }) {
-  const { status, error, viewers, traces, logs, clear } = useLiveData(
-    endpoints.wsUrl,
-  );
+  const { status, error, viewers, traces, logs, clear } = useLiveData(source);
   return (
     <Dashboard
       endpoints={endpoints}

@@ -1,10 +1,11 @@
-// Non-interactive NDJSON output (--json). No TUI: every relay event becomes one
-// JSON object on a line of stdout, so the CLI can be piped into jq, grepped, or
-// run in CI. Built on the same relay client the TUI uses.
+// Non-interactive NDJSON output (--json). No TUI: every telemetry event becomes
+// one JSON object on a line of stdout, so the CLI can be piped into jq, grepped,
+// or run in CI. Reads the same source the TUI does.
 
-import { createRelay, TraceStore } from './relay';
+import { TraceStore } from './relay';
 import { MOCK_TRACES, buildMockLogs } from './mock-data';
 import type { Endpoints, Session } from './session';
+import type { TelemetrySource } from './source';
 import type { Log, Span, Trace } from './types';
 
 // A trace can appear on several lines as its spans stream in: `trace` is the
@@ -36,6 +37,7 @@ function emit(body: StreamEventBody) {
 interface StreamOptions {
   endpoints: Endpoints;
   session: Session;
+  source: TelemetrySource;
   version: string;
   demo: boolean;
 }
@@ -43,6 +45,7 @@ interface StreamOptions {
 export function runStream({
   endpoints,
   session,
+  source,
   version,
   demo,
 }: StreamOptions) {
@@ -68,9 +71,9 @@ export function runStream({
 
   // Connection state (status, viewer count) is TUI chrome and stays out of the
   // stream: stdout carries the session line and telemetry, nothing else.
-  const relay = createRelay(endpoints.wsUrl, {
-    onReject: (message) => {
-      // Terminal: the relay will never accept us, so fail rather than idle.
+  const handle = source({
+    onFail: (message) => {
+      // Terminal: the source can never deliver, so fail rather than idle.
       // Diagnostics go to stderr; stdout stays a clean telemetry stream.
       process.stderr.write(message + '\n');
       shutdown(1);
@@ -87,7 +90,7 @@ export function runStream({
   function shutdown(code: number) {
     if (exiting) return;
     exiting = true;
-    relay.close();
+    handle.close();
     process.exit(code);
   }
 
