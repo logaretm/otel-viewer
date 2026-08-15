@@ -4,6 +4,7 @@ import { createRoot } from '@opentui/react';
 import { LiveApp } from './App';
 import { loadOrCreateSession, resolveEndpoints } from './session';
 import { initObservability, onFatal } from './observability';
+import { isBun, localIngestHelp, rendererHelp } from './runtime';
 import { relaySource } from './source';
 import { runStream } from './stream';
 import pkg from '../package.json' with { type: 'json' };
@@ -115,6 +116,12 @@ async function resolveSource() {
     return { endpoints, source: relaySource(endpoints.wsUrl) };
   }
 
+  // Bun.serve, so this one has no fallback to fail into.
+  if (!isBun) {
+    console.error(localIngestHelp());
+    process.exit(1);
+  }
+
   const { createLocalIngest } = await import('./local-server');
   try {
     const ingest = createLocalIngest(args.port);
@@ -142,10 +149,25 @@ initObservability({
   version: pkg.version,
 });
 
+// Asking the renderer to start is the check: OpenTUI's FFI works under Bun, and
+// under Node only from 26.4 behind a flag, so probing beats gating on the
+// runtime name and locking out a Node that can in fact draw this.
+async function startRenderer() {
+  try {
+    return await createCliRenderer({ exitOnCtrlC: false });
+  } catch (error) {
+    // Under Bun there is no runtime to switch to, so this is a real crash and
+    // belongs to observability's fatal handler like any other.
+    if (isBun) throw error;
+    console.error(rendererHelp(error));
+    process.exit(1);
+  }
+}
+
 async function runTui() {
   // Own Ctrl-C ourselves so quit always runs the same graceful teardown as `q`,
   // rather than the renderer's default which races our key handler.
-  const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  const renderer = await startRenderer();
   const root = createRoot(renderer);
 
   // A crash exits through observability's fatal handler, which cannot know

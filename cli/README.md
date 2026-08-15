@@ -36,7 +36,8 @@
 
 It is the same room model as the [web dashboard](https://teley.dev), so you can watch a room in your terminal, in the browser, or both at once.
 
-Built with [OpenTUI](https://opentui.com) (React bindings), so it runs on **Bun**.
+Built with [OpenTUI](https://opentui.com) (React bindings), so the waterfall
+needs FFI: **Bun**, or Node 26.4+ with `--experimental-ffi`.
 
 ## ⚡ Run
 
@@ -52,7 +53,7 @@ bunx teley-cli --local                 # receive telemetry here, no relay involv
 
 The DSN and OTLP endpoint are printed in the header. Point your SDK at either one, run your app, and spans appear.
 
-> Requires [Bun](https://bun.sh). OpenTUI uses `bun:ffi` for its native renderer and loads tree-sitter assets Node cannot resolve, so run it with `bunx`, not `npx`.
+> The TUI needs FFI, so it wants [Bun](https://bun.sh), or Node 26.4+ with `node --experimental-ffi`. `--json` and `mcp` run on any Node, `--local` is Bun-only (`Bun.serve`).
 
 ## 📡 Send your data
 
