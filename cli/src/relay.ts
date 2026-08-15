@@ -5,6 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { Trace, Span, Log, TraceEntry, WebSocketMessage } from './types';
 import type { TelemetrySource } from './source';
+import { count, logger, METRIC } from './observability';
 import { summarizeTrace } from '../../shared/parsers/trace-summary';
 
 // 'rejected' is terminal: the relay refused the handshake (room already claimed
@@ -65,6 +66,11 @@ export function createRelay(wsUrl: string, events: RelayEvents) {
     );
     // Full jitter: a random point in [0, backoff].
     const delay = Math.random() * backoff;
+    // Bucketed: the interesting question is "did this settle or is it looping",
+    // and an unbounded attempt number would make one series per retry.
+    count(METRIC.RELAY_RECONNECT, {
+      attempt: reconnectAttempts < 3 ? String(reconnectAttempts) : 'many',
+    });
     reconnectAttempts++;
     reconnectTimer = setTimeout(() => {
       reconnectTimer = null;
@@ -88,6 +94,7 @@ export function createRelay(wsUrl: string, events: RelayEvents) {
       opened = true;
       reconnectAttempts = 0;
       awaitingPong = false;
+      count(METRIC.RELAY_CONNECTED);
       events.onStatus?.('connected');
       heartbeat = setInterval(() => {
         if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -139,11 +146,19 @@ export function createRelay(wsUrl: string, events: RelayEvents) {
       awaitingPong = false;
       if (closed) return;
 
+      // Close codes are the client's half of the reconnect-gap picture: the
+      // room only sees the socket disappear.
+      count(METRIC.RELAY_CLOSED, { code: e.code, opened });
+
       // A close before the socket ever opened, with the non-101 handshake code,
       // means the relay refused us: the room is already claimed by another
       // token, or the token mismatches. Retrying can never succeed, so stop and
       // surface it instead of reconnecting forever.
       if (!opened && e.code === HANDSHAKE_REJECTED_CODE) {
+        // Terminal, and invisible from the relay's side: the DO sees a socket
+        // that never opened, the client knows it was refused.
+        count(METRIC.RELAY_REJECTED);
+        logger.warn('Relay refused the handshake', { code: e.code });
         events.onStatus?.('rejected');
         events.onReject?.(
           'Relay rejected the connection: room already claimed or token mismatch.',

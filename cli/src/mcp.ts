@@ -23,6 +23,14 @@ import {
 } from './format';
 import type { Endpoints, Session } from './session';
 import type { Log, TraceEntry } from './types';
+import {
+  captureException,
+  count,
+  distribution,
+  flush,
+  span,
+  METRIC,
+} from './observability';
 
 // Trace ids are 32 hex chars. Agents pass them back to get_trace, which accepts
 // any unambiguous prefix, so lists print a short form to keep results cheap.
@@ -131,6 +139,52 @@ function text(body: string) {
   return { content: [{ type: 'text' as const, text: body }] };
 }
 
+// How a tool call ended. 'ok' is not the only success: an agent asking for
+// traces and correctly getting none is a different story from one that timed
+// out or hit a disconnected room, and telling them apart is the point.
+type Outcome = 'ok' | 'empty' | 'timeout' | 'not_found' | 'disconnected';
+
+/**
+ * Records what a tool call did: a span for the one call, a counter for the
+ * shape of all of them, and a duration. Tool names and outcomes are ours;
+ * nothing from the room's telemetry goes with them.
+ */
+async function measure<T>(
+  tool: string,
+  run: (setOutcome: (outcome: Outcome) => void) => Promise<T>,
+): Promise<T> {
+  const startedAt = Date.now();
+  let outcome: Outcome = 'ok';
+
+  try {
+    const result = await span(
+      `mcp.tool/${tool}`,
+      { tool },
+      async (setAttribute) => {
+        const value = await run((next) => {
+          outcome = next;
+          setAttribute('outcome', next);
+        });
+        setAttribute('outcome', outcome);
+        return value;
+      },
+    );
+    count(METRIC.MCP_TOOL_CALL, { tool, outcome });
+    return result;
+  } catch (error) {
+    count(METRIC.MCP_TOOL_CALL, { tool, outcome: 'error' });
+    captureException(error, { area: 'mcp-tool', tool });
+    throw error;
+  } finally {
+    distribution(
+      METRIC.MCP_TOOL_DURATION,
+      Date.now() - startedAt,
+      { tool },
+      'millisecond',
+    );
+  }
+}
+
 // A rejected handshake means another client holds the room; every tool would
 // otherwise just report an empty room, which reads like "the app sent nothing".
 function relayProblem(room: Room): string | null {
@@ -156,18 +210,20 @@ export function buildMcpServer(
       annotations: { readOnlyHint: true },
     },
     async () =>
-      text(
-        [
-          `room_id: ${session.roomId}`,
-          `sentry_dsn: ${endpoints.dsn}`,
-          `otlp_endpoint: ${endpoints.otlp}`,
-          `host: ${endpoints.host}`,
-          '',
-          'Traces, logs, and metrics all go to the OTLP endpoint (JSON or protobuf).',
-          endpoints.local
-            ? 'This room is local to this machine: telemetry never leaves it, and no relay or web app is involved.'
-            : 'The same room is open in the Teley web app and the teley TUI.',
-        ].join('\n'),
+      measure('get_dsn', async () =>
+        text(
+          [
+            `room_id: ${session.roomId}`,
+            `sentry_dsn: ${endpoints.dsn}`,
+            `otlp_endpoint: ${endpoints.otlp}`,
+            `host: ${endpoints.host}`,
+            '',
+            'Traces, logs, and metrics all go to the OTLP endpoint (JSON or protobuf).',
+            endpoints.local
+              ? 'This room is local to this machine: telemetry never leaves it, and no relay or web app is involved.'
+              : 'The same room is open in the Teley web app and the teley TUI.',
+          ].join('\n'),
+        ),
       ),
   );
 
@@ -199,31 +255,45 @@ export function buildMcpServer(
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ idle_ms, timeout_ms, min_traces }) => {
-      const problem = relayProblem(room);
-      if (problem) return text(problem);
+    async ({ idle_ms, timeout_ms, min_traces }) =>
+      measure('wait_for_traces', async (setOutcome) => {
+        const problem = relayProblem(room);
+        if (problem) {
+          setOutcome('disconnected');
+          return text(problem);
+        }
 
-      const result = await room.waitForActivity({
-        idleMs: idle_ms,
-        timeoutMs: timeout_ms,
-        minTraces: min_traces,
-      });
+        const result = await room.waitForActivity({
+          idleMs: idle_ms,
+          timeoutMs: timeout_ms,
+          minTraces: min_traces,
+        });
 
-      if (result.timedOut && result.traces.length === 0) {
-        return text(
-          `Nothing arrived in ${timeout_ms}ms. Check that the app is running and pointed at the DSN from get_dsn, and that it flushed before exiting.`,
-        );
-      }
+        // What a run actually yields is the health signal for this whole flow:
+        // an agent that waits and gets nothing means the app under test never
+        // reached us, which is the most common way the loop fails.
+        distribution(METRIC.MCP_WAIT_TRACES, result.traces.length, {
+          timed_out: result.timedOut,
+        });
 
-      const summary = `${result.traces.length} trace(s), ${result.logs.length} log(s)${
-        result.timedOut ? ' (timed out, the room was still busy)' : ''
-      }`;
-      const empty =
-        result.logs.length > 0
-          ? 'No traces arrived, only logs. See list_logs.'
-          : 'Nothing arrived while waiting.';
-      return text([summary, '', traceList(result.traces, empty)].join('\n'));
-    },
+        if (result.timedOut && result.traces.length === 0) {
+          setOutcome('timeout');
+          return text(
+            `Nothing arrived in ${timeout_ms}ms. Check that the app is running and pointed at the DSN from get_dsn, and that it flushed before exiting.`,
+          );
+        }
+
+        if (result.traces.length === 0) setOutcome('empty');
+
+        const summary = `${result.traces.length} trace(s), ${result.logs.length} log(s)${
+          result.timedOut ? ' (timed out, the room was still busy)' : ''
+        }`;
+        const empty =
+          result.logs.length > 0
+            ? 'No traces arrived, only logs. See list_logs.'
+            : 'Nothing arrived while waiting.';
+        return text([summary, '', traceList(result.traces, empty)].join('\n'));
+      }),
   );
 
   server.registerTool(
@@ -245,22 +315,28 @@ export function buildMcpServer(
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ limit, errors_only, service }) => {
-      const problem = relayProblem(room);
-      if (problem) return text(problem);
+    async ({ limit, errors_only, service }) =>
+      measure('list_traces', async (setOutcome) => {
+        const problem = relayProblem(room);
+        if (problem) {
+          setOutcome('disconnected');
+          return text(problem);
+        }
 
-      const all = room.traces();
-      const entries = all
-        .filter((entry) => !errors_only || entry.trace.status_code === 2)
-        .filter((entry) => !service || entry.trace.service_name === service)
-        .slice(0, limit);
+        const all = room.traces();
+        const entries = all
+          .filter((entry) => !errors_only || entry.trace.status_code === 2)
+          .filter((entry) => !service || entry.trace.service_name === service)
+          .slice(0, limit);
 
-      const empty =
-        all.length === 0
-          ? NOTHING_CAPTURED
-          : `No traces match those filters (${all.length} captured).`;
-      return text(traceList(entries, empty));
-    },
+        if (entries.length === 0) setOutcome('empty');
+
+        const empty =
+          all.length === 0
+            ? NOTHING_CAPTURED
+            : `No traces match those filters (${all.length} captured).`;
+        return text(traceList(entries, empty));
+      }),
   );
 
   server.registerTool(
@@ -278,18 +354,23 @@ export function buildMcpServer(
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ trace_id, include_attributes }) => {
-      const problem = relayProblem(room);
-      if (problem) return text(problem);
+    async ({ trace_id, include_attributes }) =>
+      measure('get_trace', async (setOutcome) => {
+        const problem = relayProblem(room);
+        if (problem) {
+          setOutcome('disconnected');
+          return text(problem);
+        }
 
-      const entry = room.trace(trace_id);
-      if (!entry) {
-        return text(
-          `No single trace matches "${trace_id}". Call list_traces to see what is captured.`,
-        );
-      }
-      return text(waterfall(entry, include_attributes));
-    },
+        const entry = room.trace(trace_id);
+        if (!entry) {
+          setOutcome('not_found');
+          return text(
+            `No single trace matches "${trace_id}". Call list_traces to see what is captured.`,
+          );
+        }
+        return text(waterfall(entry, include_attributes));
+      }),
   );
 
   server.registerTool(
@@ -310,25 +391,31 @@ export function buildMcpServer(
       }),
       annotations: { readOnlyHint: true },
     },
-    async ({ limit, min_severity, trace_id }) => {
-      const problem = relayProblem(room);
-      if (problem) return text(problem);
+    async ({ limit, min_severity, trace_id }) =>
+      measure('list_logs', async (setOutcome) => {
+        const problem = relayProblem(room);
+        if (problem) {
+          setOutcome('disconnected');
+          return text(problem);
+        }
 
-      const floor = min_severity ? SEVERITY_FLOOR[min_severity]! : 0;
-      const all = room.logs();
-      const logs = all
-        .filter((log) => log.severity_number >= floor)
-        .filter(
-          (log) => !trace_id || (log.trace_id?.startsWith(trace_id) ?? false),
-        )
-        .slice(0, limit);
+        const floor = min_severity ? SEVERITY_FLOOR[min_severity]! : 0;
+        const all = room.logs();
+        const logs = all
+          .filter((log) => log.severity_number >= floor)
+          .filter(
+            (log) => !trace_id || (log.trace_id?.startsWith(trace_id) ?? false),
+          )
+          .slice(0, limit);
 
-      const empty =
-        all.length === 0
-          ? 'No logs captured yet.'
-          : `No logs match those filters (${all.length} captured).`;
-      return text(logList(logs, empty));
-    },
+        if (logs.length === 0) setOutcome('empty');
+
+        const empty =
+          all.length === 0
+            ? 'No logs captured yet.'
+            : `No logs match those filters (${all.length} captured).`;
+        return text(logList(logs, empty));
+      }),
   );
 
   server.registerTool(
@@ -339,10 +426,11 @@ export function buildMcpServer(
         'Drops the traces and logs captured so far, so the next run starts from an empty room. Local to this server: it does not clear the web app or other viewers.',
       annotations: { destructiveHint: true, idempotentHint: true },
     },
-    async () => {
-      room.clear();
-      return text('Cleared the locally captured traces and logs.');
-    },
+    async () =>
+      measure('clear_captured', async () => {
+        room.clear();
+        return text('Cleared the locally captured traces and logs.');
+      }),
   );
 
   return server;
@@ -365,16 +453,17 @@ export function runMcp(
     buildMcpServer(room, endpoints, session, version),
   );
 
-  const shutdown = () => {
+  const shutdown = async () => {
     room.close();
+    await flush();
     // Exit without waiting on the teardown promise: the transport is going away
     // with the process either way.
     void handle.close();
     process.exit(0);
   };
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
   // The client closing stdin is how a stdio server is told to go away; without
   // this the room WebSocket would keep the process alive as an orphan.
-  process.stdin.on('end', shutdown);
+  process.stdin.on('end', () => void shutdown());
 }

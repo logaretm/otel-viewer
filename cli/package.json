@@ -31,7 +31,7 @@
   ],
   "scripts": {
     "dev": "bun run src/index.tsx",
-    "build": "bun build src/index.tsx --target=bun --packages=external --outdir dist",
+    "build": "bun build src/index.tsx --target=bun --packages=external --outdir dist --define TELEY_CLI_SENTRY_DSN=\"'$TELEY_CLI_SENTRY_DSN'\"",
     "prepublishOnly": "bun run build",
     "typecheck": "tsc --noEmit"
   },
@@ -39,6 +39,7 @@
     "@modelcontextprotocol/server": "^2.0.0",
     "@opentui/core": "^0.5.3",
     "@opentui/react": "^0.5.3",
+    "@sentry/bun": "11.0.0-alpha.1",
     "nanoid": "^6.0.1",
     "react": "^19.2.8",
     "zod": "^4.4.3"

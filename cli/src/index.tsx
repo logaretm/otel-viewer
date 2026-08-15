@@ -3,6 +3,7 @@ import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { LiveApp } from './App';
 import { loadOrCreateSession, resolveEndpoints } from './session';
+import { initObservability } from './observability';
 import { relaySource } from './source';
 import { runStream } from './stream';
 import pkg from '../package.json' with { type: 'json' };
@@ -131,6 +132,15 @@ async function resolveSource() {
 }
 
 const { endpoints, source } = await resolveSource();
+
+// The CLI's own health, not the room's telemetry: see src/observability.ts for
+// where that line is drawn. Init before any mode starts, so a crash on the way
+// up is reported like any other.
+initObservability({
+  mode: args.command === 'mcp' ? 'mcp' : args.json ? 'json' : 'tui',
+  transport: endpoints.local ? 'local' : 'relay',
+  version: pkg.version,
+});
 
 async function runTui() {
   // Own Ctrl-C ourselves so quit always runs the same graceful teardown as `q`,
