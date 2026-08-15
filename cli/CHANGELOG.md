@@ -1,5 +1,17 @@
 # teley-cli
 
+## 0.2.0
+
+### Minor Changes
+
+- [#42](https://github.com/logaretm/teley/pull/42) [`bd489c9`](https://github.com/logaretm/teley/commit/bd489c9468075c9492044e0511110d5696a854e7) Thanks [@logaretm](https://github.com/logaretm)! - Add `teley mcp`, which serves the room to a coding agent over MCP (stdio, 2026-07-28 spec). Tools cover the debugging loop: `get_dsn` to point an SDK at the room, `wait_for_traces` to block until a run settles, then `list_traces`, `get_trace`, and `list_logs` to read the result back as text sized for a model.
+
+- [#39](https://github.com/logaretm/teley/pull/39) [`4d1b529`](https://github.com/logaretm/teley/commit/4d1b52962591df151e4ef663e455266aa4bae211) Thanks [@logaretm](https://github.com/logaretm)! - Add `--json`, a non-interactive mode that skips the TUI and streams the room to stdout as newline-delimited JSON: a session line carrying the DSN, then one line per trace and log. Pipe it into `jq`, keep it as a file, or run it in CI.
+
+### Patch Changes
+
+- [`c2c806f`](https://github.com/logaretm/teley/commit/c2c806fa84479c4a5b4192e21a84cd760b5bb080) Thanks [@logaretm](https://github.com/logaretm)! - Ship `CHANGELOG.md` in the published package, so `npm` and `bunx` users can read what changed without leaving the terminal.
+
 ## 0.1.7
 
 ### Patch Changes
