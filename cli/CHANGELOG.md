@@ -1,5 +1,23 @@
 # teley-cli
 
+## 0.3.0
+
+### Minor Changes
+
+- [#44](https://github.com/logaretm/teley/pull/44) [`18c7836`](https://github.com/logaretm/teley/commit/18c783669300710b31b984f6e35c8c7abb76b9db) Thanks [@logaretm](https://github.com/logaretm)! - Add `--local`, which makes the CLI itself the ingest endpoint instead of the relay. Point an SDK at `http://localhost:8788/r/<room-id>` (or `--port`) and telemetry never leaves the machine, works offline, and needs no room to claim. It runs the worker's own decoding, so JSON, protobuf, gzip, and Sentry envelopes all behave the same, and it composes with the TUI, `--json`, and `mcp`. The trade is that the web dashboard cannot open a local room.
+
+  Also stops the Sentry envelope converter from writing debug lines to stdout, which corrupted `--json` output and would have broken MCP's JSON-RPC stream.
+
+- [#48](https://github.com/logaretm/teley/pull/48) [`b90ce74`](https://github.com/logaretm/teley/commit/b90ce7494138611e734557c5ab70e9fb70430a88) Thanks [@logaretm](https://github.com/logaretm)! - The CLI now reports on itself: crashes, relay close codes, ingest rejections and MCP tool outcomes go to Teley's own Sentry project, so a published binary is no longer undebuggable. Tool calls also emit metrics (call counts by outcome, durations, and how many traces `wait_for_traces` actually returned), which is the only visibility `--local` ingest can ever have since no relay sees it.
+
+  Your telemetry is not part of that and never has been: no spans, logs, attribute values, payload bodies, room IDs or tokens leave the CLI, and errors raised while handling a payload report only the error's class name. See "What the CLI reports about itself" in the README.
+
+  Uses the Sentry v11 alpha SDK, where `sendDefaultPii` is gone and `dataCollection` defaults are permissive, so every category is set explicitly rather than inherited.
+
+### Patch Changes
+
+- [#52](https://github.com/logaretm/teley/pull/52) [`f7fdfe6`](https://github.com/logaretm/teley/commit/f7fdfe6dbd9874a22ab335ab96fc42b2456de593) Thanks [@logaretm](https://github.com/logaretm)! - Say what is wrong instead of throwing when the CLI is run under Node: the TUI needs bun or Node 26.4+ with `--experimental-ffi`, and `--local` needs bun. `--json` and `mcp` already ran on any Node and are untouched.
+
 ## 0.2.0
 
 ### Minor Changes
