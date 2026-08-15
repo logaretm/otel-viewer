@@ -215,7 +215,7 @@ abstract class BoundedStore<T> {
 
 // Accumulates traces and their spans, deduped by id. Spans for a trace may
 // arrive across several messages, so merge additively.
-class TraceStore extends BoundedStore<Trace> {
+export class TraceStore extends BoundedStore<Trace> {
   protected readonly max = MAX_TRACES;
   private spans = new Map<string, Map<string, Span>>();
 
@@ -229,7 +229,9 @@ class TraceStore extends BoundedStore<Trace> {
     this.spans.delete(id);
   }
 
-  upsert(trace: Trace, spans: Span[]) {
+  // Returns the merged trace, so callers that render a single update (the
+  // NDJSON stream) can emit the running summary rather than the partial one.
+  upsert(trace: Trace, spans: Span[]): Trace {
     let bucket = this.spans.get(trace.trace_id);
     if (!bucket) {
       bucket = new Map();
@@ -242,7 +244,9 @@ class TraceStore extends BoundedStore<Trace> {
     // Recompute timing/operation/status from all accumulated spans so streamed
     // (Sentry v2) spans arriving across messages build a stable trace summary.
     const merged = { ...existing, ...trace };
-    this.store(summarizeTrace(merged, [...bucket.values()]));
+    const summary = summarizeTrace(merged, [...bucket.values()]);
+    this.store(summary);
+    return summary;
   }
 
   clear() {
