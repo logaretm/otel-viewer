@@ -10,6 +10,7 @@ import pkg from '../package.json' with { type: 'json' };
 const DEFAULT_HOST = 'teley.dev';
 
 interface Args {
+  command: 'tui' | 'mcp';
   host: string;
   fresh: boolean;
   demo: boolean;
@@ -20,6 +21,7 @@ interface Args {
 
 function parseArgs(argv: string[]): Args {
   const args: Args = {
+    command: 'tui',
     host: process.env.TELEY_HOST || DEFAULT_HOST,
     fresh: false,
     demo: false,
@@ -30,7 +32,9 @@ function parseArgs(argv: string[]): Args {
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (arg === '--host') {
+    if (arg === 'mcp') {
+      args.command = 'mcp';
+    } else if (arg === '--host') {
       args.host = argv[++i] ?? args.host;
     } else if (arg.startsWith('--host=')) {
       args.host = arg.slice('--host='.length);
@@ -53,6 +57,7 @@ function parseArgs(argv: string[]): Args {
 const HELP = `teley — terminal trace viewer
 
 Usage: teley [options]
+       teley mcp [options]   Serve the room to a coding agent over MCP (stdio)
 
 Options:
   --host <host>   Relay host (default: ${DEFAULT_HOST}, or $TELEY_HOST)
@@ -109,7 +114,10 @@ async function runTui() {
   );
 }
 
-if (args.json) {
+if (args.command === 'mcp') {
+  const { runMcp } = await import('./mcp');
+  runMcp(endpoints, session, pkg.version);
+} else if (args.json) {
   runStream({ endpoints, session, version: pkg.version, demo: args.demo });
 } else {
   await runTui();
