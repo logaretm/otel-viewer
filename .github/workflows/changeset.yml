@@ -1,0 +1,47 @@
+name: Changeset
+
+on:
+  pull_request:
+    # shared/ is in here because the CLI bundles shared/parsers: a change there
+    # ships to npm even though no file under cli/ moved. Changesets cannot infer
+    # that link, so the check has to.
+    paths:
+      - 'cli/**'
+      - 'shared/**'
+
+concurrency:
+  group: changeset-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changeset:
+    # The release PR consumes changesets rather than adding one. It is opened
+    # with GITHUB_TOKEN so it does not trigger this workflow today, but do not
+    # let that be the only thing standing between it and a red check.
+    if: github.head_ref != 'changeset-release/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require a changeset
+        run: |
+          base="origin/${{ github.base_ref }}"
+          added=$(
+            git diff --name-only --diff-filter=A "$base...HEAD" -- '.changeset/*.md' \
+              | grep -v '^\.changeset/README\.md$' || true
+          )
+
+          if [ -n "$added" ]; then
+            echo "Found:"
+            echo "$added" | sed 's/^/  /'
+            exit 0
+          fi
+
+          echo "::error::This PR changes cli/ or shared/ but adds no changeset."
+          echo
+          echo "Run 'pnpm changeset' and commit the generated file to describe"
+          echo "the release, or 'pnpm changeset --empty' if this ships nothing"
+          echo "user-visible."
+          exit 1

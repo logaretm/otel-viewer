@@ -3,159 +3,193 @@ name: Publish CLI
 on:
   push:
     branches: [main]
+    # Changesets are what this workflow reacts to: a feature PR adding one, or
+    # the release PR removing them all. Both touch .changeset/. A cli/ or
+    # shared/ change without a changeset is deliberately not a release; the
+    # changeset PR check enforces that the omission was deliberate.
     paths:
-      # The CLI bundles its own code plus the parsers/utils in shared/.
-      # Web-only or worker-only pushes intentionally do not run this.
-      - 'cli/**'
-      - 'shared/**'
+      - '.changeset/**'
   workflow_dispatch:
     inputs:
-      version:
-        description: 'patch | minor | major, or an explicit x.y.z'
-        required: false
-        default: 'patch'
+      mode:
+        description: 'release: refresh the release PR. snapshot: throwaway build off this branch.'
+        type: choice
+        default: release
+        options: [release, snapshot]
+      bump:
+        description: 'release mode: open a release PR even with no pending changesets, using this bump'
+        type: choice
+        default: none
+        options: [none, patch, minor, major]
+      tag:
+        description: 'snapshot mode: npm dist-tag to publish under'
+        default: next
 
 permissions:
-  contents: write # push the release commit + tag
+  contents: write # push the release branch + tag
+  pull-requests: write # open and update the release PR
   id-token: write # npm trusted publishing (OIDC)
 
-jobs:
-  # Debounce a burst of merges into a single release. This job just waits out a
-  # quiet window; cancel-in-progress means each new push cancels the previous
-  # run's wait, so only the last push in a burst survives to reach `publish`.
-  # Manual dispatches skip the wait and release immediately.
-  debounce:
-    runs-on: ubuntu-latest
-    concurrency:
-      group: publish-cli-debounce
-      cancel-in-progress: true
-    steps:
-      - name: Quiet window
-        if: github.event_name == 'push'
-        run: sleep 600 # 10 min of no new cli/shared pushes before we release
+# Releases serialize; snapshots run on their own track so a snapshot dispatch
+# can never cancel a queued release.
+concurrency:
+  group: publish-cli-${{ inputs.mode || 'release' }}
+  cancel-in-progress: false
 
-  publish:
-    needs: debounce
+# Snapshots live in this file rather than their own workflow because npm pins
+# trusted publishing to a single repo + workflow filename.
+
+jobs:
+  # Accumulates pending changesets into a "chore(cli): release" PR carrying the
+  # version bump and the CHANGELOG entry. Merging that PR is the act of
+  # releasing; this job never publishes anything itself.
+  version:
+    if: github.event_name == 'push' || inputs.mode == 'release'
     runs-on: ubuntu-latest
-    # Serialize actual publishes and, unlike the debounce job, never cancel one
-    # in flight: a push landing mid-publish must not orphan the npm release from
-    # its git tag.
-    concurrency:
-      group: publish-cli-publish
-      cancel-in-progress: false
+    outputs:
+      has-changesets: ${{ steps.changesets.outputs.has-changesets }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/setup-release
+
+      # Escape hatch for releasing something that merged without a changeset.
+      - name: Synthesize a changeset for a forced release
+        if: inputs.bump != '' && inputs.bump != 'none'
+        run: |
+          cat > .changeset/forced-release.md <<EOF
+          ---
+          'teley-cli': ${{ inputs.bump }}
+          ---
+
+          Manual release dispatched from the Actions tab.
+          EOF
+
+      - uses: changesets/action@v2
+        id: changesets
         with:
-          bun-version: latest
+          version-script: pnpm exec changeset version
+          pr-title: 'chore(cli): release'
+          commit-message: 'chore(cli): version packages'
+        env:
+          # Also read by @changesets/changelog-github to resolve PRs and authors.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
+  # Reached when main has no changesets left, which is the state the release PR
+  # merge produces. Publishing what is already committed means npm, the git tag,
+  # and the GitHub release all describe the exact commit that was reviewed.
+  publish:
+    needs: version
+    if: needs.version.outputs.has-changesets == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
         with:
-          node-version: 24
-          registry-url: 'https://registry.npmjs.org'
+          fetch-depth: 0
 
-      # Trusted publishing / OIDC needs npm >= 11.5.1.
-      - name: Ensure recent npm
-        run: npm install -g npm@latest
+      - uses: ./.github/actions/setup-release
+
+      # Most runs land here with nothing to do (any push that only touched
+      # .changeset/ without changing the version), so this is a no-op, not a
+      # failure. It doubles as recovery: a run that failed after versioning but
+      # before publishing is fixed by re-running this job.
+      - name: Check the registry
+        id: check
+        run: |
+          version=$(node -p "require('./cli/package.json').version")
+
+          if npm view "teley-cli@$version" version >/dev/null 2>&1; then
+            echo "teley-cli@$version is already published; nothing to release."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+
+      # Build before publishing so a broken bundle fails the run without having
+      # tagged anything.
+      - name: Build bundle
+        if: steps.check.outputs.publish == 'true'
+        working-directory: cli
+        run: bun run build
+
+      - name: Publish to npm
+        if: steps.check.outputs.publish == 'true'
+        working-directory: cli
+        run: npm publish --access public
+
+      - name: Tag release
+        if: steps.check.outputs.publish == 'true'
+        run: |
+          git tag "cli-v${{ steps.check.outputs.version }}"
+          git push origin "cli-v${{ steps.check.outputs.version }}"
+
+      # Release notes are the CHANGELOG section the release PR carried, so what
+      # npm ships, what the changelog says, and what GitHub shows all come from
+      # the same changesets. Runs here rather than in an on:push:tags workflow
+      # because the tag above is pushed with GITHUB_TOKEN, and GitHub does not
+      # fire new workflows for those pushes.
+      - name: Create GitHub release
+        if: steps.check.outputs.publish == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Everything between the first `## ` heading and the next one.
+          awk '/^## /{ n++ } n == 1' cli/CHANGELOG.md | tail -n +2 > /tmp/notes.md
+          gh release create "cli-v${{ steps.check.outputs.version }}" \
+            --title "teley-cli v${{ steps.check.outputs.version }}" \
+            --notes-file /tmp/notes.md
+
+  # Publishes the current branch as e.g. 0.2.0-next-20260814120000 under a
+  # dist-tag, so a CLI change can be tried with `bunx teley-cli@next` before it
+  # is released. Versions nothing in git: no commit, no tag, no changesets
+  # consumed. Needs at least one pending changeset to have a version to build
+  # from.
+  snapshot:
+    if: github.event_name == 'workflow_dispatch' && inputs.mode == 'snapshot'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/setup-release
+
+      - name: Version as a snapshot
+        id: version
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          pnpm exec changeset version --snapshot "${{ inputs.tag }}"
+          version=$(node -p "require('./cli/package.json').version")
+
+          case "$version" in
+            *-"${{ inputs.tag }}"-*) ;;
+            *)
+              echo "::error::No pending changesets, so there is nothing to snapshot."
+              exit 1
+              ;;
+          esac
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Publishing $version under dist-tag ${{ inputs.tag }}"
 
       - name: Build bundle
         working-directory: cli
         run: bun run build
 
-      # Fingerprint = bundle bytes + dependencies + bin. If it matches the
-      # published version, nothing that ships changed, so skip (unless the run
-      # was triggered manually, which always forces a release).
-      - name: Decide whether to publish
-        id: decide
-        working-directory: cli
-        run: |
-          fingerprint() {
-            node -e "
-              const fs = require('fs');
-              const crypto = require('crypto');
-              const p = require('$1/package.json');
-              const h = crypto.createHash('sha256');
-              h.update(fs.readFileSync('$1/dist/index.js'));
-              h.update(JSON.stringify({ deps: p.dependencies || {}, bin: p.bin || {} }));
-              console.log(h.digest('hex'));
-            "
-          }
-
-          local_fp=$(fingerprint "$PWD")
-
-          published=$(npm view teley-cli version 2>/dev/null || echo '')
-          if [ -z "$published" ]; then
-            echo "No published version found; will publish."
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          tarball=$(npm view "teley-cli@$published" dist.tarball)
-          mkdir -p /tmp/published
-          curl -sL "$tarball" | tar -xz -C /tmp/published
-          published_fp=$(fingerprint /tmp/published/package)
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "Manual dispatch; forcing release."
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          elif [ "$local_fp" = "$published_fp" ]; then
-            echo "Bundle + manifest unchanged vs v$published; skipping."
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "Changes detected vs v$published; will publish."
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Bump version
-        if: steps.decide.outputs.publish == 'true'
-        id: bump
-        working-directory: cli
-        run: |
-          # Base the bump on the registry so package.json can't drift.
-          published=$(npm view teley-cli version 2>/dev/null || echo '')
-          base=${published:-$(node -p "require('./package.json').version")}
-          npm version "$base" --no-git-tag-version --allow-same-version >/dev/null
-
-          input='${{ github.event.inputs.version }}'
-          bump=${input:-patch}
-          case "$bump" in
-            patch|minor|major) npm version "$bump" --no-git-tag-version >/dev/null ;;
-            *) npm version "$bump" --no-git-tag-version --allow-same-version >/dev/null ;;
-          esac
-
-          new=$(node -p "require('./package.json').version")
-          echo "version=$new" >> "$GITHUB_OUTPUT"
-          echo "Releasing v$new"
-
+      # --tag keeps this off `latest`, so plain `bunx teley-cli` is unaffected.
       - name: Publish to npm
-        if: steps.decide.outputs.publish == 'true'
         working-directory: cli
-        run: npm publish --access public
+        run: npm publish --access public --tag "${{ inputs.tag }}"
 
-      - name: Commit and tag release
-        if: steps.decide.outputs.publish == 'true'
+      - name: Summary
         run: |
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add cli/package.json
-          git commit -m "chore(cli): release v${{ steps.bump.outputs.version }} [skip ci]"
-          git tag "cli-v${{ steps.bump.outputs.version }}"
-          git push origin "HEAD:${{ github.ref_name }}"
-          git push origin "cli-v${{ steps.bump.outputs.version }}"
-
-      # Turn the commits since the previous cli-v tag into a nice GitHub
-      # release. Runs here rather than in an on:push:tags workflow because the
-      # tag above is pushed with GITHUB_TOKEN, and GitHub does not fire new
-      # workflows for those pushes.
-      - name: Generate GitHub release
-        if: steps.decide.outputs.publish == 'true'
-        run: |
-          pnpm install --frozen-lockfile --filter=teley-monorepo --ignore-scripts
-          pnpm changelogithub
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "Try it with:" >> "$GITHUB_STEP_SUMMARY"
+          echo '```sh' >> "$GITHUB_STEP_SUMMARY"
+          echo "bunx teley-cli@${{ steps.version.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

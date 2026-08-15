@@ -179,6 +179,39 @@ pnpm deploy:worker    # Deploy Worker
 pnpm deploy:static    # Deploy to Cloudflare Pages
 ```
 
+## Releasing
+
+`teley-cli` is the only published package. `teley` (web) and `teley-worker` are
+private and deploy to Cloudflare rather than release, so they are never
+versioned.
+
+Versioning is driven by [changesets](https://github.com/changesets/changesets):
+
+```bash
+pnpm changeset          # describe a user-visible CLI change
+pnpm changeset --empty  # record that a change ships nothing user-visible
+pnpm changeset:status   # what would be released right now
+```
+
+Any PR touching `cli/` or `shared/` must add a changeset (`shared/parsers` is
+bundled into the CLI, so it ships to npm too). CI enforces this, and the empty
+changeset is the escape hatch.
+
+Merging a changeset does not release. `changesets/action` opens and keeps
+updating a `chore(cli): release` PR carrying the accumulated version bump and
+`cli/CHANGELOG.md` entry, so consecutive merges batch into one release. Merging
+_that_ PR publishes to npm via trusted publishing, tags `cli-vX.Y.Z`, and cuts a
+GitHub release from the new changelog section.
+
+The `Publish CLI` workflow also takes a manual dispatch: `release` mode with a
+`bump` to open a release PR for something that merged without a changeset, and
+`snapshot` mode to publish the current branch under a dist-tag
+(`bunx teley-cli@next`) without touching git.
+
+Repo setting this depends on: Settings → Actions → General → **Allow GitHub
+Actions to create and approve pull requests**. Without it the release PR cannot
+be opened.
+
 ## Architecture Notes
 
 1. **Local-first**: All telemetry stored in browser IndexedDB. No backend database.

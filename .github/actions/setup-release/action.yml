@@ -1,0 +1,26 @@
+name: Setup release toolchain
+description: Bun (to build the CLI bundle), pnpm + root deps (changesets), and an npm new enough for trusted publishing.
+
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: latest
+
+    - uses: pnpm/action-setup@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+        registry-url: 'https://registry.npmjs.org'
+
+    # Trusted publishing / OIDC needs npm >= 11.5.1.
+    - name: Ensure recent npm
+      shell: bash
+      run: npm install -g npm@latest
+
+    # Root-only: releasing needs the changesets CLI, not the web app's deps.
+    - name: Install release tooling
+      shell: bash
+      run: pnpm install --frozen-lockfile --filter=teley-monorepo --ignore-scripts

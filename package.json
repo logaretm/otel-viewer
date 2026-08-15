@@ -7,13 +7,16 @@
     "pnpm": ">=11"
   },
   "scripts": {
+    "changeset": "changeset",
+    "changeset:status": "changeset status --since=origin/main",
     "lint": "oxlint --type-aware",
     "lint:fix": "oxlint --type-aware --fix",
     "format": "oxfmt",
     "format:check": "oxfmt --check"
   },
   "devDependencies": {
-    "changelogithub": "^15.0.4",
+    "@changesets/changelog-github": "^1.0.0",
+    "@changesets/cli": "^3.0.0",
     "oxfmt": "^0.63.0",
     "oxlint": "^1.78.0",
     "oxlint-tsgolint": "^7.0.2001"
