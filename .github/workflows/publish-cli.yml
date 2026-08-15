@@ -115,11 +115,24 @@ jobs:
       - name: Build bundle
         if: steps.check.outputs.publish == 'true'
         working-directory: cli
-        run: bun run build
+        env:
+          TELEY_CLI_SENTRY_DSN: ${{ secrets.TELEY_CLI_SENTRY_DSN }}
+        # A release that silently ships without the DSN reports nothing, which
+        # is invisible until we go looking for a crash that was never sent.
+        run: |
+          if [ -z "$TELEY_CLI_SENTRY_DSN" ]; then
+            echo "::error::TELEY_CLI_SENTRY_DSN is not set; the published binary would report nothing"
+            exit 1
+          fi
+          bun run build
 
       - name: Publish to npm
         if: steps.check.outputs.publish == 'true'
         working-directory: cli
+        # prepublishOnly rebuilds inside npm publish, so it needs the DSN too or
+        # it overwrites the bundle built above with an inert one.
+        env:
+          TELEY_CLI_SENTRY_DSN: ${{ secrets.TELEY_CLI_SENTRY_DSN }}
         run: npm publish --access public
 
       - name: Tag release
@@ -180,11 +193,22 @@ jobs:
 
       - name: Build bundle
         working-directory: cli
-        run: bun run build
+        env:
+          TELEY_CLI_SENTRY_DSN: ${{ secrets.TELEY_CLI_SENTRY_DSN }}
+        # A snapshot is a throwaway dist-tag, so a missing secret warns rather
+        # than failing the run the way a real release does.
+        run: |
+          if [ -z "$TELEY_CLI_SENTRY_DSN" ]; then
+            echo "::warning::TELEY_CLI_SENTRY_DSN is not set; this snapshot will report nothing"
+          fi
+          bun run build
 
       # --tag keeps this off `latest`, so plain `bunx teley-cli` is unaffected.
       - name: Publish to npm
         working-directory: cli
+        # prepublishOnly rebuilds here too.
+        env:
+          TELEY_CLI_SENTRY_DSN: ${{ secrets.TELEY_CLI_SENTRY_DSN }}
         run: npm publish --access public --tag "${{ inputs.tag }}"
 
       - name: Summary

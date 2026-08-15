@@ -5,6 +5,9 @@ packages:
 
 allowBuilds:
   '@parcel/watcher': true
+  # Only used to upload source maps at build time, which we do not do. Skipping
+  # its postinstall avoids downloading the binary.
+  '@sentry/cli': false
   esbuild: true
   maplibre-gl: true
   sharp: true

@@ -5,6 +5,7 @@
 import { TraceStore } from './relay';
 import type { Endpoints, Session } from './session';
 import type { TelemetrySource } from './source';
+import { flush } from './observability';
 import type { Log, Span, Trace } from './types';
 
 // A trace can appear on several lines as its spans stream in: `trace` is the
@@ -77,7 +78,7 @@ export async function runStream({
       // Terminal: the source can never deliver, so fail rather than idle.
       // Diagnostics go to stderr; stdout stays a clean telemetry stream.
       process.stderr.write(message + '\n');
-      shutdown(1);
+      void shutdown(1);
     },
     onTrace: (trace, spans) =>
       emit({ type: 'trace', trace: traces.upsert(trace, spans), spans }),
@@ -88,13 +89,16 @@ export async function runStream({
   });
 
   let exiting = false;
-  function shutdown(code: number) {
+  async function shutdown(code: number) {
     if (exiting) return;
     exiting = true;
     handle.close();
+    // A piped run can be over in under a second, which is less time than the
+    // SDK's own flush interval.
+    await flush();
     process.exit(code);
   }
 
-  process.on('SIGINT', () => shutdown(0));
-  process.on('SIGTERM', () => shutdown(0));
+  process.on('SIGINT', () => void shutdown(0));
+  process.on('SIGTERM', () => void shutdown(0));
 }

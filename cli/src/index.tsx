@@ -3,6 +3,7 @@ import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { LiveApp } from './App';
 import { loadOrCreateSession, resolveEndpoints } from './session';
+import { initObservability, onFatal } from './observability';
 import { relaySource } from './source';
 import { runStream } from './stream';
 import pkg from '../package.json' with { type: 'json' };
@@ -132,11 +133,34 @@ async function resolveSource() {
 
 const { endpoints, source } = await resolveSource();
 
+// The CLI's own health, not the room's telemetry: see src/observability.ts for
+// where that line is drawn. Init before any mode starts, so a crash on the way
+// up is reported like any other.
+initObservability({
+  mode: args.command === 'mcp' ? 'mcp' : args.json ? 'json' : 'tui',
+  transport: endpoints.local ? 'local' : 'relay',
+  version: pkg.version,
+});
+
 async function runTui() {
   // Own Ctrl-C ourselves so quit always runs the same graceful teardown as `q`,
   // rather than the renderer's default which races our key handler.
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
   const root = createRoot(renderer);
+
+  // A crash exits through observability's fatal handler, which cannot know
+  // about the renderer, so hand it the teardown.
+  onFatal(() => {
+    // destroy() is what exits alt-screen and restores the cursor, and it is
+    // idempotent, so it runs even when unmounting throws: a crash inside a
+    // React render is a realistic way to get here, and skipping it would leave
+    // the terminal in the state this callback exists to undo.
+    try {
+      root.unmount();
+    } finally {
+      renderer.destroy();
+    }
+  });
 
   let shuttingDown = false;
   function shutdown() {

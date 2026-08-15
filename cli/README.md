@@ -26,6 +26,7 @@
   <a href="#-json-output">JSON output</a> •
   <a href="#-local-mode">Local mode</a> •
   <a href="#-coding-agents-mcp">MCP</a> •
+  <a href="#-what-the-cli-reports-about-itself">Self-reporting</a> •
   <a href="#-how-it-connects">How it connects</a>
 </p>
 
@@ -140,10 +141,12 @@ bunx teley-cli mcp --local           # same, serving an agent
 The DSN and OTLP endpoint in the header point at that port, so pointing an SDK at it is the same gesture as always:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8788/r/<room-id> npm start
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:8788/r/<room-id> npm start
 ```
 
-Telemetry never leaves the machine, there is nothing to deploy or reach, and there is no room to claim, so the "room already claimed" failure cannot happen. Ingest runs the same decoding the worker does (JSON or protobuf, gzip or not, Sentry envelopes), so what you see matches what the relay would have shown.
+Use the `_TRACES_` form (or the exporter's `url` option): the plain `OTEL_EXPORTER_OTLP_ENDPOINT` appends `/v1/traces` to whatever you give it, which is not a room.
+
+Your app's telemetry never leaves the machine, there is nothing to deploy or reach, and there is no room to claim, so the "room already claimed" failure cannot happen. (The CLI still reports its own crashes; see [below](#-what-the-cli-reports-about-itself).) Ingest runs the same decoding the worker does (JSON or protobuf, gzip or not, Sentry envelopes), so what you see matches what the relay would have shown.
 
 The trade: a local room has no relay behind it, so the web dashboard cannot open it, and no second device or browser tab can watch along. `--local` composes with everything else here, so the TUI, `--json`, and `mcp` all work the same way.
 
@@ -184,6 +187,16 @@ The loop is: `get_dsn` → point the SDK at it → run the app → `wait_for_tra
 It watches the same room as the TUI and the web app, so you can follow along while the agent works.
 
 The room lives in the server's memory and is never written to disk, so `teley mcp` leaves nothing behind either. It listens from the moment your MCP client starts it, and starts empty if that client restarts it: the relay keeps no history, so anything sent while no client was connected is gone.
+
+## 📮 What the CLI reports about itself
+
+`teley-cli` reports its own faults to Teley's Sentry project, the way any installed program does. That is the CLI's health, and it is a different thing from the telemetry you point at it.
+
+**Never sent, in any mode:** your spans, logs, metrics, attribute values or payload bodies, and no room ID, receive token or DSN. Error text from anything that touched a payload is reduced to the error's class name, because a parse error can quote the payload it choked on. Under `--local` your telemetry still never leaves the machine.
+
+**Sent:** crashes and stack traces from the CLI's own code, and counters about its operation, which mode it ran in, how many payloads it accepted or rejected and why, relay close codes, and how long each MCP tool took and how it ended.
+
+Point it elsewhere with `TELEY_CLI_SENTRY_DSN`, and a source build with no DSN compiled in reports nothing at all.
 
 ## 🔌 How it connects
 

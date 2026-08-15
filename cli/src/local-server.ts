@@ -19,6 +19,13 @@ import {
   OTLPDecodeError,
 } from '../../shared/parsers';
 import type { SourceEvents, TelemetrySource } from './source';
+import {
+  captureException,
+  count,
+  distribution,
+  reportPayloadFailure,
+  METRIC,
+} from './observability';
 
 // Browser SDKs post from another origin (a dev server on :3000), so ingest has
 // to answer preflights the same way the worker does.
@@ -40,7 +47,7 @@ async function ingestOTLP(
   request: Request,
   events: SourceEvents,
 ): Promise<Response> {
-  const { signal, body } = await readOTLPRequest(request);
+  const { signal, encoding, body } = await readOTLPRequest(request);
 
   if (signal === 'traces') {
     const result = parseOTLPTrace(body);
@@ -48,22 +55,40 @@ async function ingestOTLP(
       const spans = result.spans.filter((s) => s.trace_id === trace.trace_id);
       events.onTrace?.(trace, spans);
     }
+    accepted('otlp', signal, encoding, result.traces.length);
     return json({ status: 'success', tracesReceived: result.traces.length });
   }
 
   if (signal === 'logs') {
     const result = parseOTLPLogs(body);
     for (const log of result.logs) events.onLog?.(log);
+    accepted('otlp', signal, encoding, result.logs.length);
     return json({ status: 'success', logsReceived: result.logs.length });
   }
 
   if (signal === 'metrics') {
     // Parsed for the count, then dropped: the CLI renders no metrics yet.
     const result = parseOTLPMetrics(body);
+    accepted('otlp', signal, encoding, result.metrics.length);
     return json({ status: 'success', metricsReceived: result.metrics.length });
   }
 
+  // An exporter aimed at the wrong endpoint lands here, and the SDK almost
+  // always swallows the response, so this counter is the only trace of it.
+  count(METRIC.INGEST_REJECTED, { protocol: 'otlp', reason: 'unknown_signal' });
   return json({ error: 'Invalid OTLP payload' }, 400);
+}
+
+// Volume and shape only: how many records, of which signal, in which encoding.
+// Nothing about what they contain.
+function accepted(
+  protocol: string,
+  signal: string,
+  encoding: string,
+  records: number,
+) {
+  count(METRIC.INGEST_RECEIVED, { protocol, signal, encoding });
+  distribution(METRIC.INGEST_RECORDS, records, { protocol, signal });
 }
 
 async function ingestSentry(
@@ -73,15 +98,35 @@ async function ingestSentry(
   const raw = await request.text();
   if (!raw) return json({ error: 'Empty envelope body' }, 400);
 
-  const result = processSentryEnvelope(parseSentryEnvelope(raw));
+  // parseSentryEnvelope throws a plain Error for a truncated or non-JSON body,
+  // so without this it would reach the handler's catch and be filed as a crash
+  // of ours. A malformed envelope is the sender's mistake, same as an
+  // undecodable OTLP payload.
+  let result;
+  try {
+    result = processSentryEnvelope(parseSentryEnvelope(raw));
+  } catch (error) {
+    reportPayloadFailure(METRIC.INGEST_REJECTED, 'malformed_envelope', error, {
+      protocol: 'sentry',
+    });
+    return json({ error: 'Invalid Sentry envelope' }, 400);
+  }
   for (const trace of result.traces) {
     const spans = result.spans.filter((s) => s.trace_id === trace.trace_id);
     events.onTrace?.(trace, spans);
   }
   for (const log of result.logs) events.onLog?.(log);
+  accepted('sentry', 'traces', 'json', result.traces.length);
+  if (result.logs.length > 0) {
+    accepted('sentry', 'logs', 'json', result.logs.length);
+  }
 
   return json({ id: crypto.randomUUID().replace(/-/g, '') });
 }
+
+// The suffixes worth telling apart. Anything else is bucketed, so a stray
+// process posting junk paths cannot mint a metric series per path.
+const KNOWN_SUFFIXES = new Set(['/v1/traces', '/v1/logs', '/v1/metrics']);
 
 const OTLP_ROUTE = /^\/r\/([a-zA-Z0-9_-]+)$/;
 const SENTRY_ROUTE = /^\/api\/\d+\/envelope\/?$/;
@@ -133,12 +178,37 @@ export function createLocalIngest(
         // A payload we cannot decode is the sender's mistake, and answering
         // 500 would have the exporter retry the same bytes forever.
         if (error instanceof OTLPDecodeError || error instanceof SyntaxError) {
+          // The message can quote the payload, so only its shape is reported.
+          reportPayloadFailure(METRIC.INGEST_REJECTED, 'undecodable', error, {
+            protocol: url.pathname.startsWith('/api/') ? 'sentry' : 'otlp',
+          });
           return json({ error: error.message }, 400);
         }
+
+        // Not the sender's fault: a bug of ours, reached with a payload that
+        // decoded fine. Bun answers 500 and awaits the handler itself, so
+        // nothing else would report this now that the Bun server integration
+        // (which used to capture it by accident) is gone.
+        captureException(error, { area: 'ingest' });
         throw error;
       }
 
-      return json({ error: 'Not found' }, 404);
+      // Almost always an exporter appending a signal path, because
+      // OTEL_EXPORTER_OTLP_ENDPOINT is defined to do that. The SDK swallows
+      // this response, so without the counter it fails silently on both ends.
+      const suffix = url.pathname.match(/^\/r\/[a-zA-Z0-9_-]+(\/.*)$/)?.[1];
+      count(METRIC.INGEST_UNROUTED, {
+        method: request.method,
+        suffix: suffix && KNOWN_SUFFIXES.has(suffix) ? suffix : 'other',
+      });
+      return json(
+        {
+          error: suffix
+            ? `No ingest route for ${suffix}. Post OTLP to /r/{roomId} itself; OTEL_EXPORTER_OTLP_ENDPOINT appends the signal path, so use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or the exporter's url option.`
+            : 'Not found',
+        },
+        404,
+      );
     },
   });
 
