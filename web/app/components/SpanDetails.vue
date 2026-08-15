@@ -254,7 +254,7 @@
 </template>
 
 <script setup lang="ts">
-import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { SpanStatusCode } from '@opentelemetry/api';
 import type { Span } from '@types';
 import {
   formatDuration,
@@ -319,15 +319,17 @@ function getStatusLabel(code: SpanStatusCode): string {
   }
 }
 
-function getSpanKindClass(kind: SpanKind): string {
-  const classes: Record<SpanKind, string> = {
-    [SpanKind.INTERNAL]: 'internal',
-    [SpanKind.SERVER]: 'server',
-    [SpanKind.CLIENT]: 'client',
-    [SpanKind.PRODUCER]: 'producer',
-    [SpanKind.CONSUMER]: 'consumer',
+// Keyed by the OTLP wire numbering the span was stored with, same as
+// getSpanKindLabel.
+function getSpanKindClass(kind: number): string {
+  const classes: Record<number, string> = {
+    1: 'internal',
+    2: 'server',
+    3: 'client',
+    4: 'producer',
+    5: 'consumer',
   };
-  return classes[kind] || 'internal';
+  return classes[kind] ?? 'internal';
 }
 
 function formatAttributeValue(value: unknown): string {
