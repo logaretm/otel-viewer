@@ -5,7 +5,7 @@ import * as Sentry from '@sentry/cloudflare';
 import type { CloudflareOptions } from '@sentry/cloudflare';
 import type { Env } from './types';
 import { roomTag } from './util';
-import { METRIC } from '../../shared/observability';
+import { METRIC, redactUrl } from '../../shared/observability';
 
 class TelemetryRoomBase extends DurableObject<Env> {
   private receiveToken: string | null = null;
@@ -22,6 +22,7 @@ class TelemetryRoomBase extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    this.nameRequestSpan(request, url);
 
     // Internal broadcast from main worker
     if (url.pathname === '/broadcast') {
@@ -105,6 +106,23 @@ class TelemetryRoomBase extends DurableObject<Env> {
     await this.resetAlarm();
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * The span name comes from the raw path, which here is `/r/{roomId}`. Set it
+   * to the route instead, at the point the request arrives.
+   */
+  private nameRequestSpan(request: Request, url: URL): void {
+    const span = Sentry.getActiveSpan();
+    if (!span) return;
+
+    const route = url.pathname.replace(/^\/r\/[a-zA-Z0-9_-]+/, '/r/:roomId');
+    Sentry.updateSpanName(span, `${request.method} ${route}`);
+    span.setAttributes({
+      'url.full': redactUrl(request.url),
+      'url.path': route,
+      'url.query': '',
+    });
   }
 
   private broadcast(data: any): void {
@@ -241,6 +259,18 @@ export const TelemetryRoom = Sentry.instrumentDurableObjectWithSentry(
       genAI: { inputs: false, outputs: false },
       databaseQueryData: false,
       graphQL: { document: false, variables: false },
+    },
+
+    // This client sees the WebSocket upgrade, whose URL carries both halves of
+    // a room's credentials: the ID in the path and the token in the query. It
+    // was the one client in the repo with no redaction at all.
+    beforeSend(event) {
+      if (event.request?.url) event.request.url = redactUrl(event.request.url);
+      if (event.message) event.message = redactUrl(event.message);
+      for (const exception of event.exception?.values ?? []) {
+        if (exception.value) exception.value = redactUrl(exception.value);
+      }
+      return event;
     },
   }),
   TelemetryRoomBase,
