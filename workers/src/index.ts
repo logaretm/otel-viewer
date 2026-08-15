@@ -9,15 +9,11 @@ import {
   parseOTLPLogs,
   parseOTLPMetrics,
   generateEventId,
-} from '../../shared/parsers';
-import {
-  handleCORS,
-  corsResponse,
   extractRoomIdFromSentryAuth,
   readOTLPRequest,
   OTLPDecodeError,
-  roomTag,
-} from './util';
+} from '../../shared/parsers';
+import { handleCORS, corsResponse, roomTag } from './util';
 
 export { TelemetryRoom } from './durable-object';
 

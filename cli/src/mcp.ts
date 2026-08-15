@@ -12,6 +12,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import * as z from 'zod';
 import { createRoom, type Room } from './room';
+import { relaySource } from './source';
 import { buildSpanTree } from './span-tree';
 import {
   formatDuration,
@@ -352,7 +353,7 @@ export function runMcp(
 ) {
   // Record from process start, not from the first tool call, so traces sent
   // while the agent is still thinking are not lost.
-  const room = createRoom(endpoints.wsUrl);
+  const room = createRoom(relaySource(endpoints.wsUrl));
   console.error(
     `teley mcp: watching room ${session.roomId} on ${endpoints.host}`,
   );

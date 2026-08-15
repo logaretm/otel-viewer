@@ -58,6 +58,19 @@ export {
   type OTLPSignal,
 } from './otlp-protobuf';
 
+// Reading an OTLP request off the wire (shared by the worker and the CLI's
+// local ingest server)
+export {
+  readOTLPRequest,
+  extractRoomIdFromSentryAuth,
+  OTLPDecodeError,
+  isTraceRequest,
+  isLogsRequest,
+  isMetricsRequest,
+  type OTLPRequest,
+  type OTLPEncoding,
+} from './otlp-request';
+
 // Sentry to OTLP converter
 export {
   processSentryEnvelope,
