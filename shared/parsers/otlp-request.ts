@@ -18,6 +18,7 @@ import {
   type OTLPSignal,
 } from './otlp-protobuf';
 import { ProtoError } from './protobuf-reader';
+import { PayloadDecodeError } from './errors';
 
 export function isTraceRequest(
   body: Record<string, any>,
@@ -59,7 +60,7 @@ export type OTLPRequest =
  * 500: an exporter that retries a 500 will resend the same undecodable bytes
  * forever, and every attempt costs us another error report.
  */
-export class OTLPDecodeError extends Error {
+export class OTLPDecodeError extends PayloadDecodeError {
   constructor(message: string, options?: { cause?: unknown }) {
     super(message, options);
     this.name = 'OTLPDecodeError';

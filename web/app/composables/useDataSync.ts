@@ -2,6 +2,7 @@
 // This should be called once at the app level to ensure data is always captured
 
 import * as Sentry from '@sentry/browser';
+import { METRIC } from '../../../shared/observability';
 import type {
   Trace,
   Span,
@@ -123,6 +124,11 @@ export function useDataSync() {
       // handler, so a rejection is invisible: the telemetry arrived, was never
       // stored, and the dashboard looks the same as if it was never sent.
       console.error('[DataSync] Failed to persist update:', err);
+      // Counted as well as logged: one dropped update is a bug report, a rate
+      // of them is a broken release.
+      Sentry.metrics.count(METRIC.INGEST_REJECTED, 1, {
+        attributes: { surface: 'web', reason: 'persist_failed' },
+      });
       Sentry.logger.error('Dropped an inbound telemetry update', {
         message_type: message.type,
         error: err instanceof Error ? err.message : String(err),

@@ -5,6 +5,7 @@ import * as Sentry from '@sentry/cloudflare';
 import type { CloudflareOptions } from '@sentry/cloudflare';
 import type { Env } from './types';
 import { roomTag } from './util';
+import { METRIC, redactUrl } from '../../shared/observability';
 
 class TelemetryRoomBase extends DurableObject<Env> {
   private receiveToken: string | null = null;
@@ -21,6 +22,7 @@ class TelemetryRoomBase extends DurableObject<Env> {
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    this.nameRequestSpan(request, url);
 
     // Internal broadcast from main worker
     if (url.pathname === '/broadcast') {
@@ -69,6 +71,9 @@ class TelemetryRoomBase extends DurableObject<Env> {
       console.log('[DO] Token mismatch, rejecting');
       // Expected when a stale tab reconnects to a reclaimed room, but a burst
       // of these against one room is the signature of someone guessing.
+      Sentry.metrics.count(METRIC.RELAY_REJECTED, 1, {
+        attributes: { surface: 'worker', reason: 'token_mismatch' },
+      });
       Sentry.logger.warn('WebSocket rejected: token mismatch', {
         room: this.roomName(),
       });
@@ -94,10 +99,31 @@ class TelemetryRoomBase extends DurableObject<Env> {
       }),
     );
 
+    Sentry.metrics.count(METRIC.RELAY_CONNECTED, 1, {
+      attributes: { surface: 'worker' },
+    });
     this.broadcastViewerCount();
     await this.resetAlarm();
 
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  /**
+   * The span name comes from the raw path, which here is `/r/{roomId}`. Set it
+   * to the route instead, at the point the request arrives.
+   */
+  private nameRequestSpan(request: Request, url: URL): void {
+    const span = Sentry.getActiveSpan();
+    if (!span) return;
+
+    const route = url.pathname.replace(/^\/r\/[a-zA-Z0-9_-]+/, '/r/:roomId');
+    Sentry.updateSpanName(span, `${request.method} ${route}`);
+    span.setAttributes({
+      // Built from the route, not the raw URL: rebuilding from request.url
+      // would put back the query string urlQueryParams: false just removed.
+      'url.full': `${url.origin}${route}`,
+      'url.path': route,
+    });
   }
 
   private broadcast(data: any): void {
@@ -169,11 +195,19 @@ class TelemetryRoomBase extends DurableObject<Env> {
     _wasClean: boolean,
   ): void {
     console.log('[DO] WebSocket closed, code:', code, 'reason:', reason);
+    // Every client reconnects with backoff and loses whatever arrived in the
+    // gap, so the distribution of close codes is the shape of that data loss.
+    Sentry.metrics.count(METRIC.RELAY_CLOSED, 1, {
+      attributes: { surface: 'worker', code },
+    });
     this.broadcastViewerCount();
   }
 
   private broadcastViewerCount(): void {
     const sockets = this.ctx.getWebSockets();
+    Sentry.metrics.gauge(METRIC.ROOM_VIEWERS, sockets.length, {
+      attributes: { surface: 'worker' },
+    });
     const message = JSON.stringify({
       type: 'viewer_count',
       count: sockets.length,
@@ -215,7 +249,46 @@ export const TelemetryRoom = Sentry.instrumentDurableObjectWithSentry(
     // half minute with nothing in it.
     tracesSampler: ({ name, inheritOrSampleWith }) =>
       name === 'webSocketMessage' ? 0 : inheritOrSampleWith(0.1),
-    sendDefaultPii: false,
+    // v11 removed sendDefaultPii, and its replacement defaults to collecting
+    // request data. Nothing about a room's telemetry belongs in our project.
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      urlQueryParams: false,
+      httpHeaders: { request: false, response: false },
+      httpBodies: [],
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+      graphQL: { document: false, variables: false },
+    },
+
+    // This client sees the WebSocket upgrade, whose URL carries both halves of
+    // a room's credentials: the ID in the path and the token in the query. It
+    // was the one client in the repo with no redaction at all.
+    beforeSend(event) {
+      if (event.request?.url) event.request.url = redactUrl(event.request.url);
+      if (event.message) event.message = redactUrl(event.message);
+      for (const exception of event.exception?.values ?? []) {
+        if (exception.value) exception.value = redactUrl(exception.value);
+      }
+      return event;
+    },
+
+    // Same here: drop console breadcrumbs rather than try to scrub bare room
+    // IDs out of them.
+    integrations: (defaults) =>
+      defaults.filter((integration) => integration.name !== 'Console'),
+
+    // Whatever breadcrumbs remain (fetch, http) carry URLs.
+    beforeBreadcrumb(breadcrumb) {
+      if (breadcrumb.message) {
+        breadcrumb.message = redactUrl(breadcrumb.message);
+      }
+      if (typeof breadcrumb.data?.url === 'string') {
+        breadcrumb.data.url = redactUrl(breadcrumb.data.url);
+      }
+      return breadcrumb;
+    },
   }),
   TelemetryRoomBase,
 );

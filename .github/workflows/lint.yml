@@ -36,6 +36,13 @@ jobs:
       - name: Lint
         run: pnpm run lint
 
+      # The worker went untypechecked for its whole life, which is how a
+      # beforeSendSpan written against the previous SDK's span shape reached a
+      # PR: five type errors that nothing ever compiled.
+      - name: Typecheck
+        if: ${{ !cancelled() }}
+        run: pnpm run typecheck
+
       # Run even if lint failed so both problems surface in one run.
       - name: Check formatting
         if: ${{ !cancelled() }}

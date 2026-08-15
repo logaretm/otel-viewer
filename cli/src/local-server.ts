@@ -16,7 +16,7 @@ import {
   parseOTLPMetrics,
   readOTLPRequest,
   extractRoomIdFromSentryAuth,
-  OTLPDecodeError,
+  PayloadDecodeError,
 } from '../../shared/parsers';
 import type { SourceEvents, TelemetrySource } from './source';
 import {
@@ -98,19 +98,11 @@ async function ingestSentry(
   const raw = await request.text();
   if (!raw) return json({ error: 'Empty envelope body' }, 400);
 
-  // parseSentryEnvelope throws a plain Error for a truncated or non-JSON body,
-  // so without this it would reach the handler's catch and be filed as a crash
-  // of ours. A malformed envelope is the sender's mistake, same as an
-  // undecodable OTLP payload.
-  let result;
-  try {
-    result = processSentryEnvelope(parseSentryEnvelope(raw));
-  } catch (error) {
-    reportPayloadFailure(METRIC.INGEST_REJECTED, 'malformed_envelope', error, {
-      protocol: 'sentry',
-    });
-    return json({ error: 'Invalid Sentry envelope' }, 400);
-  }
+  // Both of these can throw, and only one of them can be the sender's fault:
+  // parseSentryEnvelope raises PayloadDecodeError for a body it cannot read,
+  // while processSentryEnvelope swallows per-item conversion failures itself,
+  // so anything escaping it is our bug. The handler's catch tells them apart.
+  const result = processSentryEnvelope(parseSentryEnvelope(raw));
   for (const trace of result.traces) {
     const spans = result.spans.filter((s) => s.trace_id === trace.trace_id);
     events.onTrace?.(trace, spans);
@@ -176,8 +168,13 @@ export function createLocalIngest(
         }
       } catch (error) {
         // A payload we cannot decode is the sender's mistake, and answering
-        // 500 would have the exporter retry the same bytes forever.
-        if (error instanceof OTLPDecodeError || error instanceof SyntaxError) {
+        // 500 would have the exporter retry the same bytes forever. The
+        // parsers raise PayloadDecodeError for exactly that case, so anything
+        // else reaching here is ours.
+        if (
+          error instanceof PayloadDecodeError ||
+          error instanceof SyntaxError
+        ) {
           // The message can quote the payload, so only its shape is reported.
           reportPayloadFailure(METRIC.INGEST_REJECTED, 'undecodable', error, {
             protocol: url.pathname.startsWith('/api/') ? 'sentry' : 'otlp',

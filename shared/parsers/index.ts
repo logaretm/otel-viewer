@@ -58,6 +58,9 @@ export {
   type OTLPSignal,
 } from './otlp-protobuf';
 
+// Whose fault a decode failure is
+export { PayloadDecodeError } from './errors';
+
 // Reading an OTLP request off the wire (shared by the worker and the CLI's
 // local ingest server)
 export {
