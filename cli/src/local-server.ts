@@ -170,10 +170,22 @@ export function createLocalIngest(
         throw error;
       }
 
-      // Almost always an exporter appending a signal path (the OTLP env var
-      // does that), which otherwise fails silently on both ends.
-      count(METRIC.INGEST_UNROUTED, { method: request.method });
-      return json({ error: 'Not found' }, 404);
+      // Almost always an exporter appending a signal path, because
+      // OTEL_EXPORTER_OTLP_ENDPOINT is defined to do that. The SDK swallows
+      // this response, so without the counter it fails silently on both ends.
+      const suffix = url.pathname.match(/^\/r\/[a-zA-Z0-9_-]+(\/.*)$/)?.[1];
+      count(METRIC.INGEST_UNROUTED, {
+        method: request.method,
+        suffix: suffix ?? 'other',
+      });
+      return json(
+        {
+          error: suffix
+            ? `No ingest route for ${suffix}. Post OTLP to /r/{roomId} itself; OTEL_EXPORTER_OTLP_ENDPOINT appends the signal path, so use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or the exporter's url option.`
+            : 'Not found',
+        },
+        404,
+      );
     },
   });
 

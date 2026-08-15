@@ -141,8 +141,10 @@ bunx teley-cli mcp --local           # same, serving an agent
 The DSN and OTLP endpoint in the header point at that port, so pointing an SDK at it is the same gesture as always:
 
 ```bash
-OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:8788/r/<room-id> npm start
+OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:8788/r/<room-id> npm start
 ```
+
+Use the `_TRACES_` form (or the exporter's `url` option): the plain `OTEL_EXPORTER_OTLP_ENDPOINT` appends `/v1/traces` to whatever you give it, which is not a room.
 
 Your app's telemetry never leaves the machine, there is nothing to deploy or reach, and there is no room to claim, so the "room already claimed" failure cannot happen. (The CLI still reports its own crashes; see [below](#-what-the-cli-reports-about-itself).) Ingest runs the same decoding the worker does (JSON or protobuf, gzip or not, Sentry envelopes), so what you see matches what the relay would have shown.
 

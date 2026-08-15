@@ -206,7 +206,7 @@ export function buildMcpServer(
     {
       title: 'Get ingest endpoints',
       description:
-        'Returns the Sentry DSN and OTLP endpoint for the room this server is watching. Point the app under test at one of them (Sentry.init, an OTLP exporter, or OTEL_EXPORTER_OTLP_ENDPOINT), then run the app and call wait_for_traces.',
+        'Returns the Sentry DSN and OTLP endpoint for the room this server is watching. Point the app under test at one of them (Sentry.init, an OTLP exporter url, or OTEL_EXPORTER_OTLP_TRACES_ENDPOINT), then run the app and call wait_for_traces.',
       annotations: { readOnlyHint: true },
     },
     async () =>
@@ -219,6 +219,7 @@ export function buildMcpServer(
             `host: ${endpoints.host}`,
             '',
             'Traces, logs, and metrics all go to the OTLP endpoint (JSON or protobuf).',
+            'Use it verbatim: OTEL_EXPORTER_OTLP_ENDPOINT appends /v1/traces, so prefer OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or the exporter url option.',
             endpoints.local
               ? 'This room is local to this machine: telemetry never leaves it, and no relay or web app is involved.'
               : 'The same room is open in the Teley web app and the teley TUI.',
