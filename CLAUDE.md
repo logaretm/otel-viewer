@@ -208,9 +208,8 @@ The `Publish CLI` workflow also takes a manual dispatch: `release` mode with a
 `snapshot` mode to publish the current branch under a dist-tag
 (`bunx teley-cli@next`) without touching git.
 
-Repo setting this depends on: Settings → Actions → General → **Allow GitHub
-Actions to create and approve pull requests**. Without it the release PR cannot
-be opened.
+If the release PR ever fails to open, check Settings → Actions → General →
+**Allow GitHub Actions to create and approve pull requests**.
 
 ## Architecture Notes
 
