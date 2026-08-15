@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
-import { LiveApp, DemoApp } from './App';
+import { LiveApp } from './App';
 import { loadOrCreateSession, resolveEndpoints } from './session';
 import { relaySource } from './source';
 import { runStream } from './stream';
@@ -151,20 +151,23 @@ async function runTui() {
     }
   }
 
-  root.render(
-    args.demo ? (
-      <DemoApp endpoints={endpoints} onQuit={shutdown} />
-    ) : (
-      <LiveApp endpoints={endpoints} source={source} onQuit={shutdown} />
-    ),
-  );
+  // The sample data is only loaded when --demo asks for it, so a live run never
+  // carries it.
+  if (args.demo) {
+    const { DemoApp } = await import('./demo');
+    root.render(<DemoApp endpoints={endpoints} onQuit={shutdown} />);
+  } else {
+    root.render(
+      <LiveApp endpoints={endpoints} source={source} onQuit={shutdown} />,
+    );
+  }
 }
 
 if (args.command === 'mcp') {
   const { runMcp } = await import('./mcp');
   runMcp(endpoints, session, source, pkg.version);
 } else if (args.json) {
-  runStream({
+  await runStream({
     endpoints,
     session,
     source,

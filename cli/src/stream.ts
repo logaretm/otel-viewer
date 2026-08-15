@@ -3,7 +3,6 @@
 // or run in CI. Reads the same source the TUI does.
 
 import { TraceStore } from './relay';
-import { MOCK_TRACES, buildMockLogs } from './mock-data';
 import type { Endpoints, Session } from './session';
 import type { TelemetrySource } from './source';
 import type { Log, Span, Trace } from './types';
@@ -42,7 +41,7 @@ interface StreamOptions {
   demo: boolean;
 }
 
-export function runStream({
+export async function runStream({
   endpoints,
   session,
   source,
@@ -59,8 +58,10 @@ export function runStream({
   });
 
   // --demo --json: dump the sample data and exit, so the event shape can be
-  // inspected without wiring up an SDK.
+  // inspected without wiring up an SDK. Loaded on demand, so a live run never
+  // pays for the sample data.
   if (demo) {
+    const { MOCK_TRACES, buildMockLogs } = await import('./mock-data');
     for (const { trace, spans } of MOCK_TRACES)
       emit({ type: 'trace', trace, spans });
     for (const log of buildMockLogs()) emit({ type: 'log', log });
