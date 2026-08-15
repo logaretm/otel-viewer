@@ -1,15 +1,15 @@
-// Headless room view: the relay client without a UI.
+// Headless room view: telemetry without a UI.
 //
-// The relay keeps no history (TelemetryRoom only broadcasts live), so whatever
-// is not held here is gone. This owns the connection and the bounded stores,
-// tracks when each trace was last touched, and can wait for a run to settle.
-// Used by the MCP server; the TUI has its own React-flavored equivalent.
+// Holds the bounded stores over whatever TelemetrySource feeds it, tracks when
+// each trace was last touched, and can wait for a run to settle. Used by the
+// MCP server; the TUI has its own React-flavored equivalent.
 //
 // Memory only, deliberately: nothing is written to disk. A restart therefore
 // starts from an empty room, which is the trade for the CLI leaving nothing
 // behind but the room credentials.
 
-import { createRelay, TraceStore, LogStore, type RelayStatus } from './relay';
+import { TraceStore, LogStore } from './relay';
+import type { SourceStatus, TelemetrySource } from './source';
 import type { Log, TraceEntry } from './types';
 
 export interface WaitOptions {
@@ -32,7 +32,7 @@ export interface WaitResult {
 const POLL_MS = 100;
 
 export interface Room {
-  status: () => RelayStatus;
+  status: () => SourceStatus;
   error: () => string | null;
   traces: () => TraceEntry[];
   logs: () => Log[];
@@ -42,7 +42,7 @@ export interface Room {
   close: () => void;
 }
 
-export function createRoom(wsUrl: string): Room {
+export function createRoom(source: TelemetrySource): Room {
   const traceStore = new TraceStore();
   const logStore = new LogStore();
   // Last time each trace was touched, so a wait can report the traces a run
@@ -50,15 +50,15 @@ export function createRoom(wsUrl: string): Room {
   const touchedAt = new Map<string, number>();
   const logSeenAt = new Map<string, number>();
 
-  let status: RelayStatus = 'connecting';
+  let status: SourceStatus = 'connecting';
   let error: string | null = null;
   let lastActivityAt = Date.now();
 
-  const relay = createRelay(wsUrl, {
+  const handle = source({
     onStatus: (next) => {
       status = next;
     },
-    onReject: (message) => {
+    onFail: (message) => {
       error = message;
     },
     onTrace: (trace, spans) => {
@@ -133,6 +133,6 @@ export function createRoom(wsUrl: string): Room {
       logSeenAt.clear();
     },
 
-    close: () => relay.close(),
+    close: () => handle.close(),
   };
 }
