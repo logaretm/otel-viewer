@@ -12,6 +12,7 @@ import {
   extractRoomIdFromSentryAuth,
   readOTLPRequest,
   OTLPDecodeError,
+  PayloadDecodeError,
 } from '../../shared/parsers';
 import { handleCORS, corsResponse, roomTag } from './util';
 import { METRIC, redactUrl } from '../../shared/observability';
@@ -259,28 +260,7 @@ async function handleSentryIngest(
     }
 
     // Parse Sentry envelope
-    let envelope;
-    try {
-      envelope = parseSentryEnvelope(rawBody);
-    } catch (error) {
-      // parseSentryEnvelope throws a plain Error for a truncated or non-JSON
-      // body, so without this a sender's mistake is filed as our exception.
-      Sentry.metrics.count(METRIC.INGEST_REJECTED, 1, {
-        attributes: {
-          surface: 'worker',
-          protocol: 'sentry',
-          reason: 'malformed_envelope',
-        },
-      });
-      Sentry.logger.warn('Sentry envelope rejected: malformed', {
-        room: roomTag(roomId),
-        error_type: error instanceof Error ? error.name : 'unknown',
-      });
-      return new Response(JSON.stringify({ error: 'Invalid envelope' }), {
-        status: 400,
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
+    const envelope = parseSentryEnvelope(rawBody);
     console.log('[Worker] Parsed envelope, items:', envelope.items.length);
 
     // Convert Sentry data to OTLP format
@@ -366,8 +346,29 @@ async function handleSentryIngest(
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error: any) {
+    // A body we cannot read is the sender's mistake: a rejection, a 400, and
+    // nothing to page anyone about. Anything else broke in our conversion code
+    // on an envelope that parsed, so it stays an exception and a 500.
+    if (error instanceof PayloadDecodeError) {
+      Sentry.metrics.count(METRIC.INGEST_REJECTED, 1, {
+        attributes: {
+          surface: 'worker',
+          protocol: 'sentry',
+          reason: 'undecodable',
+        },
+      });
+      Sentry.logger.warn('Sentry envelope rejected: undecodable', {
+        room: roomTag(roomId),
+        error_type: error.name,
+      });
+      return new Response(JSON.stringify({ error: 'Invalid envelope' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     console.error('[Sentry] Error:', error.message);
-    Sentry.logger.error('Sentry envelope failed to parse', {
+    Sentry.logger.error('Sentry envelope conversion failed', {
       room: roomTag(roomId),
       error: error.message,
     });

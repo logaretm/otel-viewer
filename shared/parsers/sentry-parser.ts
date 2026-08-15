@@ -1,6 +1,8 @@
 // Sentry Envelope Parser
 // Reference: https://develop.sentry.dev/sdk/envelopes/
 
+import { PayloadDecodeError } from './errors';
+
 export interface SentryEnvelopeHeaders {
   event_id?: string;
   sent_at?: string;
@@ -57,7 +59,7 @@ export function parseSentryEnvelope(raw: string): SentryEnvelope {
   const lines = raw.split('\n').filter((line) => line.trim());
 
   if (lines.length < 2) {
-    throw new Error('Invalid envelope: too few lines');
+    throw new PayloadDecodeError('Invalid envelope: too few lines');
   }
 
   // First line: envelope headers
@@ -65,7 +67,7 @@ export function parseSentryEnvelope(raw: string): SentryEnvelope {
   try {
     headers = JSON.parse(lines[0]!);
   } catch {
-    throw new Error('Invalid envelope: failed to parse headers');
+    throw new PayloadDecodeError('Invalid envelope: failed to parse headers');
   }
 
   // Remaining lines: item headers + payloads in pairs
