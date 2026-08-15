@@ -98,7 +98,19 @@ async function ingestSentry(
   const raw = await request.text();
   if (!raw) return json({ error: 'Empty envelope body' }, 400);
 
-  const result = processSentryEnvelope(parseSentryEnvelope(raw));
+  // parseSentryEnvelope throws a plain Error for a truncated or non-JSON body,
+  // so without this it would reach the handler's catch and be filed as a crash
+  // of ours. A malformed envelope is the sender's mistake, same as an
+  // undecodable OTLP payload.
+  let result;
+  try {
+    result = processSentryEnvelope(parseSentryEnvelope(raw));
+  } catch (error) {
+    reportPayloadFailure(METRIC.INGEST_REJECTED, 'malformed_envelope', error, {
+      protocol: 'sentry',
+    });
+    return json({ error: 'Invalid Sentry envelope' }, 400);
+  }
   for (const trace of result.traces) {
     const spans = result.spans.filter((s) => s.trace_id === trace.trace_id);
     events.onTrace?.(trace, spans);
