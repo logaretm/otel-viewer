@@ -488,17 +488,20 @@ function mapSentryStatus(status?: string): number {
 }
 
 /**
- * Map Sentry operation to OTLP span kind
+ * Map Sentry operation to OTLP span kind.
+ *
+ * Values are the OTLP wire numbering (1=Internal, 2=Server, 3=Client), matching
+ * what the OTLP parser stores, so both sources render the same way.
  */
 function mapSentrySpanKind(op?: string): number {
-  if (!op) return 0; // INTERNAL
+  if (!op) return 1; // INTERNAL
 
-  if (op.startsWith('http.server')) return 1; // SERVER
+  if (op.startsWith('http.server')) return 2; // SERVER
   if (op.startsWith('http.client')) return 3; // CLIENT
   if (op.includes('request') || op.includes('fetch')) return 3; // CLIENT
   if (op.includes('db') || op.includes('query')) return 3; // CLIENT
 
-  return 0; // INTERNAL
+  return 1; // INTERNAL
 }
 
 /**

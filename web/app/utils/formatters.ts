@@ -78,7 +78,7 @@ function escapeHtml(str: string): string {
 }
 
 // Utility functions for formatting trace data
-import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { SpanStatusCode } from '@opentelemetry/api';
 import type { TraceSource } from '@types';
 
 export function formatDuration(ms: number): string {
@@ -119,15 +119,26 @@ export function getStatusColor(statusCode: SpanStatusCode): string {
   }
 }
 
-export function getSpanKindLabel(kind: SpanKind): string {
-  const kinds: Record<SpanKind, string> = {
-    [SpanKind.INTERNAL]: 'Internal',
-    [SpanKind.SERVER]: 'Server',
-    [SpanKind.CLIENT]: 'Client',
-    [SpanKind.PRODUCER]: 'Producer',
-    [SpanKind.CONSUMER]: 'Consumer',
-  };
-  return kinds[kind] || 'Internal';
+// Spans keep the kind exactly as it arrived on the wire, so this maps the OTLP
+// numbering (1=Internal .. 5=Consumer). `SpanKind` from `@opentelemetry/api`
+// starts at INTERNAL=0 and would shift every label by one.
+const SPAN_KIND_LABEL: Record<number, string> = {
+  1: 'Internal',
+  2: 'Server',
+  3: 'Client',
+  4: 'Producer',
+  5: 'Consumer',
+};
+
+export function getSpanKindLabel(kind: number): string {
+  return SPAN_KIND_LABEL[kind] ?? 'Internal';
+}
+
+// Single-letter badge, matching the CLI: Consumer shows N so it does not read
+// as Client.
+export function getSpanKindBadge(kind: number): string {
+  if (kind === 5) return 'N';
+  return getSpanKindLabel(kind)[0]!;
 }
 
 // Log severity mapping (OTLP spec: severity numbers 1-24)

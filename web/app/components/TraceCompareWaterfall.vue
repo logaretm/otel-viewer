@@ -50,7 +50,7 @@
                   )
                 "
               >
-                {{ getSpanKindLabel(row.spanA.span.kind)[0] }}
+                {{ getSpanKindBadge(row.spanA.span.kind) }}
               </span>
               <span class="text-sm text-zinc-300 truncate">{{
                 row.spanA.span.name
@@ -106,7 +106,7 @@
                   )
                 "
               >
-                {{ getSpanKindLabel(row.spanB.span.kind)[0] }}
+                {{ getSpanKindBadge(row.spanB.span.kind) }}
               </span>
               <span class="text-sm text-zinc-300 truncate">{{
                 row.spanB.span.name
@@ -152,7 +152,7 @@
 
 <script setup lang="ts">
 import type { AlignedRow } from '~/composables/useTraceComparison';
-import { formatDuration, getSpanKindLabel } from '~/utils/formatters';
+import { formatDuration, getSpanKindBadge } from '~/utils/formatters';
 
 defineProps<{
   alignedRows: AlignedRow[];
