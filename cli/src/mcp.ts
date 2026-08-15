@@ -454,7 +454,12 @@ export function runMcp(
     buildMcpServer(room, endpoints, session, version),
   );
 
+  let exiting = false;
   const shutdown = async () => {
+    // Re-entrant now that it awaits a flush: a second ctrl-c inside that window,
+    // or SIGINT racing stdin closing, would otherwise tear the room down twice.
+    if (exiting) return;
+    exiting = true;
     room.close();
     await flush();
     // Exit without waiting on the teardown promise: the transport is going away

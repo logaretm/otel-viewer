@@ -3,7 +3,7 @@ import { createCliRenderer } from '@opentui/core';
 import { createRoot } from '@opentui/react';
 import { LiveApp } from './App';
 import { loadOrCreateSession, resolveEndpoints } from './session';
-import { initObservability } from './observability';
+import { initObservability, onFatal } from './observability';
 import { relaySource } from './source';
 import { runStream } from './stream';
 import pkg from '../package.json' with { type: 'json' };
@@ -147,6 +147,13 @@ async function runTui() {
   // rather than the renderer's default which races our key handler.
   const renderer = await createCliRenderer({ exitOnCtrlC: false });
   const root = createRoot(renderer);
+
+  // A crash exits through observability's fatal handler, which cannot know
+  // about the renderer, so hand it the teardown.
+  onFatal(() => {
+    root.unmount();
+    renderer.destroy();
+  });
 
   let shuttingDown = false;
   function shutdown() {

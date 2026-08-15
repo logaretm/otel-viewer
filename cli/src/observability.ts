@@ -53,6 +53,9 @@ export function initObservability({
     dsn: address,
     environment: process.env.TELEY_ENV ?? 'production',
     release: `teley-cli@${version}`,
+    // The Bun SDK defaults serverName to os.hostname(), which on a laptop is
+    // usually its owner's name. Nothing here is per-machine.
+    serverName: 'cli',
     // A session produces tens of spans (one per MCP tool call), not the
     // millions a server sees, so sampling them away would only leave gaps.
     tracesSampleRate: 1,
@@ -78,9 +81,15 @@ export function initObservability({
     },
 
     // Console breadcrumbs would collect whatever the CLI prints, and in --json
-    // mode what it prints is the user's telemetry.
+    // mode what it prints is the user's telemetry. The Bun server integrations
+    // proxy Bun.serve and name spans after the request path, which under
+    // --local is `POST /r/{roomId}`: the CLI wants spans for its own tools, not
+    // transactions for an ingest server it never queries.
     integrations: (defaults) =>
-      defaults.filter((integration) => integration.name !== 'Console'),
+      defaults.filter(
+        (integration) =>
+          !['Console', 'BunServer', 'BunHttpServer'].includes(integration.name),
+      ),
 
     beforeSend(event) {
       scrubEvent(event);
@@ -109,9 +118,27 @@ export function initObservability({
   });
 }
 
+// Whoever owns the terminal registers how to give it back. Without this the
+// TUI's alt-screen and hidden cursor survive the exit, and the user needs
+// `reset` to get a usable shell again.
+let restoreTerminal: (() => void) | null = null;
+
+export function onFatal(teardown: () => void) {
+  restoreTerminal = teardown;
+}
+
 async function fatal(error: unknown, kind: string) {
   Sentry.captureException(error, { tags: { fatal: kind } });
   await Sentry.flush(2000).catch(() => {});
+
+  // Restore the terminal before writing, or the message lands on a screen the
+  // user is about to lose.
+  try {
+    restoreTerminal?.();
+  } catch {
+    // A failing teardown must not swallow the crash it was meant to survive.
+  }
+
   process.stderr.write(
     `teley: ${kind}: ${error instanceof Error ? error.message : String(error)}\n`,
   );

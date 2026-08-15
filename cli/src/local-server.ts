@@ -111,6 +111,10 @@ async function ingestSentry(
   return json({ id: crypto.randomUUID().replace(/-/g, '') });
 }
 
+// The suffixes worth telling apart. Anything else is bucketed, so a stray
+// process posting junk paths cannot mint a metric series per path.
+const KNOWN_SUFFIXES = new Set(['/v1/traces', '/v1/logs', '/v1/metrics']);
+
 const OTLP_ROUTE = /^\/r\/([a-zA-Z0-9_-]+)$/;
 const SENTRY_ROUTE = /^\/api\/\d+\/envelope\/?$/;
 
@@ -176,7 +180,7 @@ export function createLocalIngest(
       const suffix = url.pathname.match(/^\/r\/[a-zA-Z0-9_-]+(\/.*)$/)?.[1];
       count(METRIC.INGEST_UNROUTED, {
         method: request.method,
-        suffix: suffix ?? 'other',
+        suffix: suffix && KNOWN_SUFFIXES.has(suffix) ? suffix : 'other',
       });
       return json(
         {
