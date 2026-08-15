@@ -148,7 +148,7 @@ function nameRequestSpan(request: Request, url: URL): void {
   // rather than the raw request URL, which would put every other query param
   // back on the span that urlQueryParams: false just removed.
   span.setAttributes({
-    'url.full': redactUrl(`${url.origin}${route}`),
+    'url.full': `${url.origin}${route}`,
     'url.path': route,
   });
 }
@@ -232,6 +232,23 @@ export default Sentry.withSentry(
         if (exception.value) exception.value = redactUrl(exception.value);
       }
       return event;
+    },
+
+    // Console breadcrumbs are the wrong shape to scrub: this file logs bare
+    // room IDs, and a bare nanoid matches no URL pattern. The logs exist for
+    // `wrangler tail`, not for Sentry, so the integration goes instead.
+    integrations: (defaults) =>
+      defaults.filter((integration) => integration.name !== 'Console'),
+
+    // Whatever breadcrumbs remain (fetch, http) carry URLs.
+    beforeBreadcrumb(breadcrumb) {
+      if (breadcrumb.message) {
+        breadcrumb.message = redactUrl(breadcrumb.message);
+      }
+      if (typeof breadcrumb.data?.url === 'string') {
+        breadcrumb.data.url = redactUrl(breadcrumb.data.url);
+      }
+      return breadcrumb;
     },
   }),
   handler,

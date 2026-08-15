@@ -119,9 +119,10 @@ class TelemetryRoomBase extends DurableObject<Env> {
     const route = url.pathname.replace(/^\/r\/[a-zA-Z0-9_-]+/, '/r/:roomId');
     Sentry.updateSpanName(span, `${request.method} ${route}`);
     span.setAttributes({
-      'url.full': redactUrl(request.url),
+      // Built from the route, not the raw URL: rebuilding from request.url
+      // would put back the query string urlQueryParams: false just removed.
+      'url.full': `${url.origin}${route}`,
       'url.path': route,
-      'url.query': '',
     });
   }
 
@@ -271,6 +272,22 @@ export const TelemetryRoom = Sentry.instrumentDurableObjectWithSentry(
         if (exception.value) exception.value = redactUrl(exception.value);
       }
       return event;
+    },
+
+    // Same here: drop console breadcrumbs rather than try to scrub bare room
+    // IDs out of them.
+    integrations: (defaults) =>
+      defaults.filter((integration) => integration.name !== 'Console'),
+
+    // Whatever breadcrumbs remain (fetch, http) carry URLs.
+    beforeBreadcrumb(breadcrumb) {
+      if (breadcrumb.message) {
+        breadcrumb.message = redactUrl(breadcrumb.message);
+      }
+      if (typeof breadcrumb.data?.url === 'string') {
+        breadcrumb.data.url = redactUrl(breadcrumb.data.url);
+      }
+      return breadcrumb;
     },
   }),
   TelemetryRoomBase,
