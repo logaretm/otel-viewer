@@ -84,6 +84,9 @@ jobs:
     needs: version
     if: needs.version.outputs.has-changesets == 'false'
     runs-on: ubuntu-latest
+    # TELEY_CLI_SENTRY_DSN lives here, and environment secrets are only handed
+    # to jobs that ask for the environment by name.
+    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
@@ -165,6 +168,7 @@ jobs:
   snapshot:
     if: github.event_name == 'workflow_dispatch' && inputs.mode == 'snapshot'
     runs-on: ubuntu-latest
+    environment: production
     steps:
       - uses: actions/checkout@v4
         with:
