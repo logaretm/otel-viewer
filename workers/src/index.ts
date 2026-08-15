@@ -139,17 +139,36 @@ function nameRequestSpan(request: Request, url: URL): void {
   const span = Sentry.getActiveSpan();
   if (!span) return;
 
-  const route = url.pathname
-    .replace(/^\/r\/[a-zA-Z0-9_-]+/, '/r/:roomId')
-    .replace(/^\/api\/\d+\/envelope/, '/api/:projectId/envelope');
+  const route = templateRoute(url.pathname);
 
   Sentry.updateSpanName(span, `${request.method} ${route}`);
-  // url.full and url.path were set from the real URL when the span opened.
+  // The SDK already ran url.full through the dataCollection filter when it
+  // opened the span, so the query string is gone. Rebuild from origin and path
+  // rather than the raw request URL, which would put every other query param
+  // back on the span that urlQueryParams: false just removed.
   span.setAttributes({
-    'url.full': redactUrl(request.url),
+    'url.full': redactUrl(`${url.origin}${route}`),
     'url.path': route,
-    'url.query': '',
   });
+}
+
+/**
+ * A path reduced to the route that produced it. Anything trailing a room ID is
+ * bucketed the same way the unrouted counter buckets it: this path is public
+ * and unauthenticated, so keeping the tail verbatim would let anyone mint a
+ * transaction name per request.
+ */
+function templateRoute(pathname: string): string {
+  const room = pathname.match(/^\/r\/[a-zA-Z0-9_-]+(\/.*)?$/);
+  if (room) {
+    const suffix = room[1];
+    if (!suffix) return '/r/:roomId';
+    return `/r/:roomId${OTLP_SIGNAL_PATHS.has(suffix) ? suffix : '/*'}`;
+  }
+  if (/^\/api\/\d+\/envelope\/?$/.test(pathname)) {
+    return '/api/:projectId/envelope';
+  }
+  return pathname;
 }
 
 // Volume and shape only: how many records, of which signal, in which encoding.
