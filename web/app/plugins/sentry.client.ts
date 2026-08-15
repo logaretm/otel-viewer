@@ -30,7 +30,10 @@ export default defineNuxtPlugin((nuxtApp) => {
       databaseQueryData: false,
       graphQL: { document: false, variables: false },
     },
-    integrations: [Sentry.browserTracingIntegration()],
+    // browserTracingIntegration would register web vitals on its own, but
+    // naming it here keeps LCP, CLS and INP from silently depending on that
+    // default, the same way dataCollection above is spelled out.
+    integrations: [Sentry.browserTracingIntegration(), Sentry.webVitalsIntegration()],
 
     beforeBreadcrumb(breadcrumb) {
       if (typeof breadcrumb.data?.url === 'string') {
