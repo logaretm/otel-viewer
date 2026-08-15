@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/screenshots/otel-viewer-complex-waterfall.png" alt="Teley waterfall view" width="100%">
+  <img src="docs/screenshots/teley-trace-waterfall.png" alt="Teley waterfall view" width="100%">
 </p>
 
 <p align="center">
@@ -43,6 +43,10 @@ Two ways to use it, same room model:
 2. Click your **session ID** in the header to copy your DSN and OTLP endpoint.
 3. Point your app's Sentry or OpenTelemetry SDK at it (see [Send your data](#-send-your-data)).
 4. Run your app. Traces, logs, and metrics stream in live.
+
+<p align="center">
+  <img src="docs/screenshots/teley-setup-endpoints.png" alt="The setup dialog showing the room's Sentry DSN and OTLP endpoint" width="100%">
+</p>
 
 ### In your terminal
 
@@ -136,7 +140,28 @@ Running your own worker? Swap `teley.dev` for your host, or use `teley-cli --hos
 - **Live mode.** Auto-select the newest trace as it arrives, so the latest activity is always in front of you.
 
 <p align="center">
-  <img src="docs/screenshots/otel-viewer-span-details-panel.png" alt="Span details panel" width="100%">
+  <img src="docs/screenshots/teley-span-details.png" alt="Span details panel showing attributes and events" width="100%">
+  <br><em>Click any span for its ids, kind, status, timing, attributes, events, and links.</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/teley-error-trace.png" alt="A failed trace with the exception event expanded" width="100%">
+  <br><em>Failures are colored down the whole path, with the exception event and stack trace on the span that threw.</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/teley-logs.png" alt="Live log stream with an expanded row" width="100%">
+  <br><em>Logs stream in with severity coloring. Expand a row for the full message, trace id, and typed attributes.</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/teley-metrics.png" alt="Metrics dashboard charting a gauge over time" width="100%">
+  <br><em>Counters, gauges, histograms, and sets are charted as they arrive.</em>
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/teley-trace-compare.png" alt="Two traces compared side by side" width="100%">
+  <br><em>Compare two traces: spans are aligned with an LCS diff, and added, removed, and slower spans are called out.</em>
 </p>
 
 <details>
