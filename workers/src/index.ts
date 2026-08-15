@@ -168,7 +168,13 @@ function templateRoute(pathname: string): string {
   if (/^\/api\/\d+\/envelope\/?$/.test(pathname)) {
     return '/api/:projectId/envelope';
   }
-  return pathname;
+
+  // Everything else is the SPA or its assets, whose filenames are content
+  // hashed. Keep the first segment so the shape stays legible and bucket the
+  // rest, or each deploy mints a fresh set of span names.
+  const [, first, ...rest] = pathname.split('/');
+  if (!first) return '/';
+  return rest.length > 0 ? `/${first}/*` : `/${first}`;
 }
 
 // Volume and shape only: how many records, of which signal, in which encoding.
@@ -253,7 +259,28 @@ async function handleSentryIngest(
     }
 
     // Parse Sentry envelope
-    const envelope = parseSentryEnvelope(rawBody);
+    let envelope;
+    try {
+      envelope = parseSentryEnvelope(rawBody);
+    } catch (error) {
+      // parseSentryEnvelope throws a plain Error for a truncated or non-JSON
+      // body, so without this a sender's mistake is filed as our exception.
+      Sentry.metrics.count(METRIC.INGEST_REJECTED, 1, {
+        attributes: {
+          surface: 'worker',
+          protocol: 'sentry',
+          reason: 'malformed_envelope',
+        },
+      });
+      Sentry.logger.warn('Sentry envelope rejected: malformed', {
+        room: roomTag(roomId),
+        error_type: error instanceof Error ? error.name : 'unknown',
+      });
+      return new Response(JSON.stringify({ error: 'Invalid envelope' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     console.log('[Worker] Parsed envelope, items:', envelope.items.length);
 
     // Convert Sentry data to OTLP format
