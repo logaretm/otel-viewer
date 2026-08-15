@@ -25,3 +25,5 @@ logs
 
 # Cloudflare Workers
 .wrangler
+
+.claude
