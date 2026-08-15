@@ -23,6 +23,7 @@
   <a href="#-send-your-data">Send data</a> •
   <a href="#-what-you-get">Features</a> •
   <a href="#%EF%B8%8F-keys">Keys</a> •
+  <a href="#-json-output">JSON output</a> •
   <a href="#-how-it-connects">How it connects</a>
 </p>
 
@@ -41,6 +42,7 @@ bunx teley-cli                         # live room against the deployed relay
 bunx teley-cli --demo                  # sample data, no network
 bunx teley-cli --new                   # start a fresh room (new DSN)
 bunx teley-cli --host localhost:8787   # point at a local worker
+bunx teley-cli --json                  # no TUI, newline-delimited JSON on stdout
 ```
 
 The DSN and OTLP endpoint are printed in the header. Point your SDK at either one, run your app, and spans appear.
@@ -71,6 +73,7 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 - **Logs view.** The full log stream with severity colors, correlated with the traces in the same room.
 - **Both protocols.** OTLP and Sentry envelopes render in one timeline, each tagged with its source.
 - **Sessions that persist.** Your room is reused across runs, so a restart does not invalidate the DSN you configured.
+- **Pipeable.** `--json` drops the TUI and streams the room as newline-delimited JSON, for `jq`, a file, or CI.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-span-details.png" alt="Span attributes panel next to the waterfall" width="100%">
@@ -94,6 +97,28 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 | `q`                      | Quit                                          |
 
 With the trace list focused, `↑`/`↓` moves between traces. With the waterfall focused, it moves between spans and the attribute panel follows along.
+
+## 🧾 JSON output
+
+`--json` skips the TUI entirely and streams the room to stdout as newline-delimited JSON, one object per line. Same room, same relay, no terminal rendering, so it pipes and greps.
+
+```bash
+bunx teley-cli --json | jq 'select(.type == "trace" and .trace.status_code == 2)'
+bunx teley-cli --json > run.ndjson         # keep a run for later
+bunx teley-cli --json --demo               # sample data, to see the shape
+```
+
+The first line is the session, so a script can read the DSN it should point an SDK at. Every line after it is telemetry:
+
+```jsonc
+{ "type": "session", "version": "0.1.7", "room_id": "…", "host": "teley.dev", "dsn": "…", "otlp": "…", "time": "…" }
+{ "type": "trace", "trace": { … }, "spans": [ … ], "time": "…" }
+{ "type": "log", "log": { … }, "time": "…" }
+```
+
+`trace` and `log` carry the same shapes the web app uses (`shared/parsers/types.ts`). A trace appears on a new line every time more of it arrives: `trace` is the running summary over every span seen so far, while `spans` holds only the spans from that update, so lines never repeat a span.
+
+Nothing else is written to stdout. Connection state stays out of the stream, and a fatal error (a room already claimed by another token) goes to stderr with exit code 1. `ctrl-c` exits 0.
 
 ## 🔌 How it connects
 
