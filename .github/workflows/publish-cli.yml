@@ -195,7 +195,13 @@ jobs:
         working-directory: cli
         env:
           TELEY_CLI_SENTRY_DSN: ${{ secrets.TELEY_CLI_SENTRY_DSN }}
-        run: bun run build
+        # A snapshot is a throwaway dist-tag, so a missing secret warns rather
+        # than failing the run the way a real release does.
+        run: |
+          if [ -z "$TELEY_CLI_SENTRY_DSN" ]; then
+            echo "::warning::TELEY_CLI_SENTRY_DSN is not set; this snapshot will report nothing"
+          fi
+          bun run build
 
       # --tag keeps this off `latest`, so plain `bunx teley-cli` is unaffected.
       - name: Publish to npm

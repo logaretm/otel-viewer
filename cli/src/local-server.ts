@@ -20,6 +20,7 @@ import {
 } from '../../shared/parsers';
 import type { SourceEvents, TelemetrySource } from './source';
 import {
+  captureException,
   count,
   distribution,
   reportPayloadFailure,
@@ -171,6 +172,12 @@ export function createLocalIngest(
           });
           return json({ error: error.message }, 400);
         }
+
+        // Not the sender's fault: a bug of ours, reached with a payload that
+        // decoded fine. Bun answers 500 and awaits the handler itself, so
+        // nothing else would report this now that the Bun server integration
+        // (which used to capture it by accident) is gone.
+        captureException(error, { area: 'ingest' });
         throw error;
       }
 

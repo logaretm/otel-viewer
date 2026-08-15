@@ -97,7 +97,6 @@ export function initObservability({
     },
   });
 
-  Sentry.setTags({ mode, transport });
   Sentry.setContext('runtime', {
     bun: process.versions.bun ?? 'unknown',
     platform: process.platform,

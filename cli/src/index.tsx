@@ -151,8 +151,15 @@ async function runTui() {
   // A crash exits through observability's fatal handler, which cannot know
   // about the renderer, so hand it the teardown.
   onFatal(() => {
-    root.unmount();
-    renderer.destroy();
+    // destroy() is what exits alt-screen and restores the cursor, and it is
+    // idempotent, so it runs even when unmounting throws: a crash inside a
+    // React render is a realistic way to get here, and skipping it would leave
+    // the terminal in the state this callback exists to undo.
+    try {
+      root.unmount();
+    } finally {
+      renderer.destroy();
+    }
   });
 
   let shuttingDown = false;
