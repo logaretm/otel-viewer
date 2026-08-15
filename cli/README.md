@@ -24,6 +24,7 @@
   <a href="#-what-you-get">Features</a> •
   <a href="#%EF%B8%8F-keys">Keys</a> •
   <a href="#-json-output">JSON output</a> •
+  <a href="#-coding-agents-mcp">MCP</a> •
   <a href="#-how-it-connects">How it connects</a>
 </p>
 
@@ -43,6 +44,7 @@ bunx teley-cli --demo                  # sample data, no network
 bunx teley-cli --new                   # start a fresh room (new DSN)
 bunx teley-cli --host localhost:8787   # point at a local worker
 bunx teley-cli --json                  # no TUI, newline-delimited JSON on stdout
+bunx teley-cli mcp                     # serve the room to a coding agent over MCP
 ```
 
 The DSN and OTLP endpoint are printed in the header. Point your SDK at either one, run your app, and spans appear.
@@ -74,6 +76,7 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 - **Both protocols.** OTLP and Sentry envelopes render in one timeline, each tagged with its source.
 - **Sessions that persist.** Your room is reused across runs, so a restart does not invalidate the DSN you configured.
 - **Pipeable.** `--json` drops the TUI and streams the room as newline-delimited JSON, for `jq`, a file, or CI.
+- **Readable by agents.** `teley mcp` hands the same room to a coding agent as MCP tools, so it can run your app and read the span tree back.
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-span-details.png" alt="Span attributes panel next to the waterfall" width="100%">
@@ -119,6 +122,44 @@ The first line is the session, so a script can read the DSN it should point an S
 `trace` and `log` carry the same shapes the web app uses (`shared/parsers/types.ts`). A trace appears on a new line every time more of it arrives: `trace` is the running summary over every span seen so far, while `spans` holds only the spans from that update, so lines never repeat a span.
 
 Nothing else is written to stdout. Connection state stays out of the stream, and a fatal error (a room already claimed by another token) goes to stderr with exit code 1. `ctrl-c` exits 0.
+
+## 🤖 Coding agents (MCP)
+
+`teley mcp` serves the room over [MCP](https://modelcontextprotocol.io) on stdio, so an agent can instrument your app, run it, and read the traces back without a terminal. It speaks the 2026-07-28 spec (stateless: no session handshake, every tool call self-contained).
+
+```bash
+claude mcp add teley -- bunx teley-cli mcp
+```
+
+```jsonc
+// or by hand, in .mcp.json
+{
+  "mcpServers": {
+    "teley": { "command": "bunx", "args": ["teley-cli", "mcp"] },
+  },
+}
+```
+
+| Tool              | What it does                                                                     |
+| ----------------- | -------------------------------------------------------------------------------- |
+| `get_dsn`         | The room's DSN and OTLP endpoint, to point an SDK at                             |
+| `wait_for_traces` | Blocks until the room goes quiet, returns what arrived (`idle_ms`, `timeout_ms`) |
+| `list_traces`     | Captured traces, newest first (`limit`, `errors_only`, `service`)                |
+| `get_trace`       | One trace as an indented span tree (`include_attributes` for the metadata)       |
+| `list_logs`       | Captured logs (`min_severity`, `trace_id`)                                       |
+| `clear_captured`  | Drops what the server is holding, so the next run starts clean                   |
+
+The loop is: `get_dsn` → point the SDK at it → run the app → `wait_for_traces` → `get_trace` on whatever looks wrong. Results come back as text sized for a model to read, not raw payloads:
+
+```
+     +0ms  POST /checkout                    213.0ms  server  ERROR
+  +10.0ms    GET inventory-service            59.0ms  client
+  +80.0ms    db.query orders                 120.0ms  client  ERROR
+```
+
+It watches the same room as the TUI and the web app, so you can follow along while the agent works.
+
+The room lives in the server's memory and is never written to disk, so `teley mcp` leaves nothing behind either. It listens from the moment your MCP client starts it, and starts empty if that client restarts it: the relay keeps no history, so anything sent while no client was connected is gone.
 
 ## 🔌 How it connects
 
