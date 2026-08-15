@@ -263,7 +263,7 @@ export class TraceStore extends BoundedStore<Trace> {
 }
 
 // Accumulates logs, deduped by id, newest first, capped at MAX_LOGS.
-class LogStore extends BoundedStore<Log> {
+export class LogStore extends BoundedStore<Log> {
   protected readonly max = MAX_LOGS;
 
   protected idOf(log: Log) {
