@@ -1,13 +1,10 @@
 name: Changeset
 
 on:
+  # No `paths:` filter here on purpose. Every PR needs a changeset, and a
+  # workflow filtered out by paths never reports at all, which would leave a PR
+  # waiting forever on a required status that never arrives.
   pull_request:
-    # shared/ is in here because the CLI bundles shared/parsers: a change there
-    # ships to npm even though no file under cli/ moved. Changesets cannot infer
-    # that link, so the check has to.
-    paths:
-      - 'cli/**'
-      - 'shared/**'
 
 concurrency:
   group: changeset-${{ github.ref }}
@@ -17,7 +14,8 @@ jobs:
   changeset:
     # The release PR consumes changesets rather than adding one. It is opened
     # with GITHUB_TOKEN so it does not trigger this workflow today, but do not
-    # let that be the only thing standing between it and a red check.
+    # let that be the only thing standing between it and a red check. A job
+    # skipped this way still counts as passing for the required check.
     if: github.head_ref != 'changeset-release/main'
     runs-on: ubuntu-latest
     steps:
@@ -39,9 +37,11 @@ jobs:
             exit 0
           fi
 
-          echo "::error::This PR changes cli/ or shared/ but adds no changeset."
+          echo "::error::This PR adds no changeset."
           echo
-          echo "Run 'pnpm changeset' and commit the generated file to describe"
-          echo "the release, or 'pnpm changeset --empty' if this ships nothing"
-          echo "user-visible."
+          echo "Run 'pnpm changeset' to describe the release, or"
+          echo "'pnpm changeset --empty' if this ships nothing user-visible."
+          echo
+          echo "Only cli/ and shared/ ship to npm, so anything else is almost"
+          echo "always an empty changeset."
           exit 1
