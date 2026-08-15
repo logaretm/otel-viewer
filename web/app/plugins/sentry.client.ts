@@ -1,23 +1,10 @@
 import * as Sentry from '@sentry/browser';
-
-/**
- * Room credentials travel in URLs: the receive token as `?token=`, the room ID
- * as a path segment on `/r/:id` and `/live/:id`. Sentry collects URLs from
- * breadcrumbs, spans and the page itself, so every URL leaving this app gets
- * redacted first. Anyone reading these two values out of an event could join or
- * write to a stranger's room.
- */
-function redactUrl(value: string): string {
-  let out = value.replace(
-    /([?&](?:token|receiveToken)=)[^&#]*/gi,
-    '$1[redacted]',
-  );
-  out = out.replace(/(\/(?:r|live|shared)\/)([^/?#]+)/gi, (_, prefix, id) => {
-    return `${prefix}${String(id).slice(0, 4)}...`;
-  });
-
-  return out;
-}
+// Room credentials travel in URLs (the receive token as `?token=`, the room ID
+// as a path segment), and Sentry collects URLs from breadcrumbs, spans and the
+// page itself. The redaction is shared with the worker and the CLI so one fix
+// covers every surface: anyone reading those values out of an event could join
+// or write to a stranger's room.
+import { METRIC, redactUrl } from '../../../shared/observability';
 
 export default defineNuxtPlugin((nuxtApp) => {
   const config = useRuntimeConfig();
@@ -29,11 +16,20 @@ export default defineNuxtPlugin((nuxtApp) => {
     dsn,
     environment: config.public.sentryEnvironment,
     release: config.public.cliVersion,
-    enableLogs: true,
     tracesSampleRate: 0.1,
-    // Telemetry in a room belongs to whoever is being debugged. Never let it,
-    // or anything identifying its owner, ride along into our own project.
-    sendDefaultPii: false,
+    // Telemetry in a room belongs to whoever is being debugged. v11 removed
+    // sendDefaultPii and its dataCollection defaults are permissive, so every
+    // category is named here rather than inherited.
+    dataCollection: {
+      userInfo: false,
+      cookies: false,
+      urlQueryParams: false,
+      httpHeaders: { request: false, response: false },
+      httpBodies: [],
+      genAI: { inputs: false, outputs: false },
+      databaseQueryData: false,
+      graphQL: { document: false, variables: false },
+    },
     integrations: [Sentry.browserTracingIntegration()],
 
     beforeBreadcrumb(breadcrumb) {
@@ -61,6 +57,10 @@ export default defineNuxtPlugin((nuxtApp) => {
 
       return event;
     },
+  });
+
+  Sentry.metrics.count(METRIC.SESSION_STARTED, 1, {
+    attributes: { surface: 'web', mode: 'dashboard', transport: 'relay' },
   });
 
   // @sentry/browser has no Vue integration, so component errors have to be

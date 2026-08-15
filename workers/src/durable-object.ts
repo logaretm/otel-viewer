@@ -5,6 +5,7 @@ import * as Sentry from '@sentry/cloudflare';
 import type { CloudflareOptions } from '@sentry/cloudflare';
 import type { Env } from './types';
 import { roomTag } from './util';
+import { METRIC } from '../../shared/observability';
 
 class TelemetryRoomBase extends DurableObject<Env> {
   private receiveToken: string | null = null;
@@ -69,6 +70,9 @@ class TelemetryRoomBase extends DurableObject<Env> {
       console.log('[DO] Token mismatch, rejecting');
       // Expected when a stale tab reconnects to a reclaimed room, but a burst
       // of these against one room is the signature of someone guessing.
+      Sentry.metrics.count(METRIC.RELAY_REJECTED, 1, {
+        attributes: { surface: 'worker', reason: 'token_mismatch' },
+      });
       Sentry.logger.warn('WebSocket rejected: token mismatch', {
         room: this.roomName(),
       });
@@ -94,6 +98,9 @@ class TelemetryRoomBase extends DurableObject<Env> {
       }),
     );
 
+    Sentry.metrics.count(METRIC.RELAY_CONNECTED, 1, {
+      attributes: { surface: 'worker' },
+    });
     this.broadcastViewerCount();
     await this.resetAlarm();
 
@@ -169,11 +176,19 @@ class TelemetryRoomBase extends DurableObject<Env> {
     _wasClean: boolean,
   ): void {
     console.log('[DO] WebSocket closed, code:', code, 'reason:', reason);
+    // Every client reconnects with backoff and loses whatever arrived in the
+    // gap, so the distribution of close codes is the shape of that data loss.
+    Sentry.metrics.count(METRIC.RELAY_CLOSED, 1, {
+      attributes: { surface: 'worker', code },
+    });
     this.broadcastViewerCount();
   }
 
   private broadcastViewerCount(): void {
     const sockets = this.ctx.getWebSockets();
+    Sentry.metrics.gauge(METRIC.ROOM_VIEWERS, sockets.length, {
+      attributes: { surface: 'worker' },
+    });
     const message = JSON.stringify({
       type: 'viewer_count',
       count: sockets.length,

@@ -1,6 +1,7 @@
 // Composable for relay communication via SharedWorker
 
 import * as Sentry from '@sentry/browser';
+import { METRIC } from '../../../shared/observability';
 import type { WebSocketMessage } from '../../../shared/parsers/types';
 
 type RelayStatus = 'disconnected' | 'connecting' | 'connected';
@@ -29,6 +30,9 @@ export function useRelay() {
       console.error('[Relay] SharedWorker is not supported in this browser');
       // The whole live-data path depends on this. Without it the dashboard
       // loads and then silently never receives anything.
+      Sentry.metrics.count(METRIC.RELAY_REJECTED, 1, {
+        attributes: { surface: 'web', reason: 'sharedworker_unsupported' },
+      });
       Sentry.logger.error('SharedWorker unsupported, relay unavailable', {
         user_agent: navigator.userAgent,
       });

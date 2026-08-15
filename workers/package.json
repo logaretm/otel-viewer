@@ -11,6 +11,6 @@
     "wrangler": "^4.123.0"
   },
   "dependencies": {
-    "@sentry/cloudflare": "^10.70.0"
+    "@sentry/cloudflare": "11.0.0-alpha.1"
   }
 }
