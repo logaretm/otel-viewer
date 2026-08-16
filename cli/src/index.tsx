@@ -4,7 +4,7 @@ import { createRoot } from '@opentui/react';
 import { LiveApp } from './App';
 import { loadOrCreateSession, resolveEndpoints } from './session';
 import { initObservability, onFatal } from './observability';
-import { isBun, localIngestHelp, rendererHelp } from './runtime';
+import { isBun, rendererHelp } from './runtime';
 import { relaySource } from './source';
 import { runStream } from './stream';
 import pkg from '../package.json' with { type: 'json' };
@@ -116,15 +116,9 @@ async function resolveSource() {
     return { endpoints, source: relaySource(endpoints.wsUrl) };
   }
 
-  // Bun.serve, so this one has no fallback to fail into.
-  if (!isBun) {
-    console.error(localIngestHelp());
-    process.exit(1);
-  }
-
   const { createLocalIngest } = await import('./local-server');
   try {
-    const ingest = createLocalIngest(args.port);
+    const ingest = await createLocalIngest(args.port);
     return {
       endpoints: resolveEndpoints(`localhost:${ingest.port}`, session, true),
       source: ingest.source,

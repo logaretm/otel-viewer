@@ -11,7 +11,7 @@
 // So: errors and stacks from our code, counts of what happened, how long tools
 // took. Never a payload, never an attribute value, never a room credential.
 
-import * as Sentry from '@sentry/bun';
+import * as Sentry from '@sentry/node';
 import {
   METRIC,
   redactUrl,
@@ -53,9 +53,20 @@ export function initObservability({
     dsn: address,
     environment: process.env.TELEY_ENV ?? 'production',
     release: `teley-cli@${version}`,
-    // The Bun SDK defaults serverName to os.hostname(), which on a laptop is
+    // The SDK defaults serverName to os.hostname(), which on a laptop is
     // usually its owner's name. Nothing here is per-machine.
     serverName: 'cli',
+    // Neither SDK names the runtime correctly on its own: the bun build calls
+    // everything bun, and this one calls everything node, because bun answers
+    // process.versions.node with the version it emulates. Asking which one is
+    // actually here is the only way to get it right, and it is the difference
+    // between a crash that reproduces and one that does not. It goes here
+    // rather than in setContext because the client stamps this option over
+    // whatever the scope carries.
+    runtime: {
+      name: process.versions.bun ? 'bun' : 'node',
+      version: process.versions.bun ?? process.versions.node,
+    },
     // A session produces tens of spans (one per MCP tool call), not the
     // millions a server sees, so sampling them away would only leave gaps.
     tracesSampleRate: 1,
@@ -80,16 +91,48 @@ export function initObservability({
       graphQL: { document: false, variables: false },
     },
 
-    // Console breadcrumbs would collect whatever the CLI prints, and in --json
-    // mode what it prints is the user's telemetry. The Bun server integrations
-    // proxy Bun.serve and name spans after the request path, which under
-    // --local is `POST /r/{roomId}`: the CLI wants spans for its own tools, not
-    // transactions for an ingest server it never queries.
-    integrations: (defaults) =>
-      defaults.filter(
-        (integration) =>
-          !['Console', 'BunServer', 'BunHttpServer'].includes(integration.name),
-      ),
+    // Named rather than subtracted. The default set is forty-odd integrations
+    // for frameworks, databases and AI providers a terminal viewer will never
+    // load, and several of the ones that do apply are actively wrong here, so
+    // the list below is everything that ships and the block under it is why the
+    // notable absences are absent.
+    defaultIntegrations: false,
+    integrations: [
+      // What makes a reported crash readable.
+      Sentry.eventFiltersIntegration(), // drops the noise Sentry knows about
+      Sentry.linkedErrorsIntegration(), // `cause` chains, which the parsers throw
+      Sentry.contextLinesIntegration(), // source lines around each frame
+      Sentry.functionToStringIntegration(),
+      // Which release is crashing, and what it resolved its dependencies to.
+      Sentry.processSessionIntegration(),
+      Sentry.modulesIntegration(),
+      // The clipboard shells out (pbcopy and friends), and a spawn that fails
+      // on a machine without it is otherwise invisible.
+      Sentry.childProcessIntegration(),
+    ],
+    //
+    // Deliberately absent:
+    //
+    // Console      breadcrumbs would collect whatever the CLI prints, and in
+    //              --json mode what it prints is the user's telemetry.
+    // Http         names spans after the request path, which under --local is
+    //              `POST /r/{roomId}`: the CLI wants spans for its own tools,
+    //              not transactions for an ingest server it never queries. The
+    //              outgoing half it also covers has nothing to instrument,
+    //              since the relay is a WebSocket and Sentry's own transport is
+    //              excluded anyway.
+    // RequestData  attaches request data to events, and the requests here are
+    //              the user's payloads.
+    // LocalVariablesAsync
+    //              puts locals in the stack trace, and the locals in the
+    //              ingest path hold the decoded payload.
+    // Context      brings os and runtime, which are wanted, along with boot
+    //              time, CPU model, memory size, locale and timezone, which
+    //              fingerprint the machine. Runtime is the option above, and
+    //              os and arch are set on the scope after init.
+    // OnUncaughtException, OnUnhandledRejection
+    //              initObservability registers its own handlers, which also
+    //              flush and give the terminal back. Both sets would fire.
 
     beforeSend(event) {
       scrubEvent(event);
@@ -97,11 +140,9 @@ export function initObservability({
     },
   });
 
-  Sentry.setContext('runtime', {
-    bun: process.versions.bun ?? 'unknown',
-    platform: process.platform,
-    arch: process.arch,
-  });
+  // The coarse half of what the Context integration would have sent.
+  Sentry.setContext('os', { name: process.platform });
+  Sentry.setContext('device', { arch: process.arch });
 
   enabled = true;
 

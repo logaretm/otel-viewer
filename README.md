@@ -5,7 +5,7 @@
 <h1 align="center">Teley</h1>
 
 <p align="center">
-  A real-time viewer for traces, logs, and metrics. Point any OpenTelemetry or Sentry SDK at a room, watch your telemetry stream in live. In your browser or right in your terminal.
+  A real-time viewer for traces, logs, and metrics, for you and your agents. Point any OpenTelemetry or Sentry SDK at a room and watch it stream in.
 </p>
 
 <p align="center">
@@ -22,24 +22,24 @@
   <a href="#-get-started-in-under-a-minute">Quickstart</a> •
   <a href="#-send-your-data">Send data</a> •
   <a href="#-what-you-get">Features</a> •
-  <a href="#-how-it-works">How it works</a> •
   <a href="#-self-host">Self-host</a>
 </p>
 
 ---
 
-Teley is a zero-setup, local-first observability dashboard. Every session gets its own private room with a unique DSN. Your app sends telemetry to that room, and you see it appear instantly. There is no account, no database to run, and no data leaving your machine beyond the live relay.
+Teley is a zero-setup observability dashboard. Every session gets its own room with a unique DSN, and telemetry sent there appears instantly. No account, no database to run.
 
-Two ways to use it, same room model:
+Three ways in, same room:
 
 - **Web** at [teley.dev](https://teley.dev) for the full dashboard: waterfall traces, logs, metrics, and side-by-side trace comparison.
 - **Terminal** via `teley-cli` for a live waterfall without leaving your shell.
+- **Agents** via `teley-cli mcp`, which hands the room to a coding agent over MCP.
 
 ## ⚡ Get started in under a minute
 
 ### On the web
 
-1. Open **[teley.dev](https://teley.dev)**. A private room is created for you instantly. No signup.
+1. Open **[teley.dev](https://teley.dev)**. A room is created for you instantly. No signup.
 2. Click your **session ID** in the header to copy your DSN and OTLP endpoint.
 3. Point your app's Sentry or OpenTelemetry SDK at it (see [Send your data](#-send-your-data)).
 4. Run your app. Traces, logs, and metrics stream in live.
@@ -52,16 +52,17 @@ Two ways to use it, same room model:
 
 ```bash
 bunx teley-cli          # live room, waterfall in your terminal
-bunx teley-cli --demo   # sample data, no network, see it instantly
+bunx teley-cli mcp      # serve the room to a coding agent over MCP
+bunx teley-cli --demo   # sample data, no network
 ```
 
 The DSN is printed in the header. Point your SDK at it, run your app, and watch spans arrive.
 
-> Requires [Bun](https://bun.sh). The CLI's renderer uses `bun:ffi`, so run it with `bunx`, not `npx`.
+> The TUI needs FFI, so either [Bun](https://bun.sh), or Node 26.4+ with `node --experimental-ffi` are needed. Everything else (`--json`, `mcp`, `--local`) runs on Node/Bun alike.
 
 ## 📡 Send your data
 
-Teley speaks two protocols out of the box. Both point at the same room. Swap in the session ID from the header (`<room-id>` below).
+Both protocols point at the same room. Swap in the session ID from the header (`<room-id>` below).
 
 ### Sentry SDK
 
@@ -77,7 +78,7 @@ Sentry.init({
 });
 ```
 
-Sentry transactions become traces and errors become logs, converted to OTLP automatically. They show up tagged with a `SENTRY` badge.
+Transactions become traces and errors become logs, tagged with a `SENTRY` badge.
 
 ### OpenTelemetry (OTLP over HTTP)
 
@@ -134,9 +135,10 @@ Running your own worker? Swap `teley.dev` for your host, or use `teley-cli --hos
 - **Span details.** ID, parent, kind, status, timing, attributes, events, and links. One click from any span.
 - **Live logs.** Real-time stream with severity coloring (`TRACE` through `FATAL`), expandable rows, and trace/span correlation.
 - **Metrics.** Counters, gauges, histograms, and sets, charted as they arrive.
-- **Trace comparison.** Line up two traces side by side. Teley aligns spans with an LCS diff and highlights the differences in structure, duration, and attributes.
+- **Trace comparison.** Line up two traces side by side. Spans are aligned with an LCS diff, and the differences in structure, duration, and attributes are called out.
 - **Two protocols, one view.** OTLP and Sentry envelopes land in the same unified timeline.
-- **Local-first.** Everything is stored in your browser's IndexedDB. Rooms are private and ephemeral.
+- **Readable by agents.** `teley-cli mcp` hands the same room to a coding agent as MCP tools, so it can run your app and read the span tree back.
+- **Local-first.** Everything is stored in your browser.
 - **Live mode.** Auto-select the newest trace as it arrives, so the latest activity is always in front of you.
 
 <p align="center">
@@ -176,35 +178,13 @@ Running your own worker? Swap `teley.dev` for your host, or use `teley-cli --hos
 | `c`                      | Clear the local view                          |
 | `q`                      | Quit                                          |
 
-Run `teley --help` for all flags (`--host`, `--new`, `--demo`).
-
-</details>
-
-## 🔌 How it works
-
-```
-Your app  ──OTLP / Sentry──▶  Cloudflare Worker  ──▶  TelemetryRoom (Durable Object)
-                                                              │  WebSocket broadcast
-                                                              ▼
-                                              Web dashboard  +  teley-cli
-                                              (IndexedDB)       (terminal)
-```
-
-Each room is a Durable Object holding a WebSocket fan-out. The first client claims the room with a receive token; ingest is keyed by room ID. The web app and the CLI are both just relay clients rendering the same stream. Nothing is persisted server-side beyond the live room (shared trace snapshots are the one exception, kept for 24 hours).
-
-<details>
-<summary>Tech stack</summary>
-
-- **Web:** Nuxt 4 (Vue 3 + TypeScript, SSR off), Tailwind CSS v4, Unovis charts, Dexie (IndexedDB), a `SharedWorker` for one WebSocket across tabs.
-- **CLI:** [OpenTUI](https://opentui.com) (React bindings) on Bun. Reuses the shared parsers and the web app's `buildSpanTree`.
-- **Backend:** Cloudflare Workers + Durable Objects.
-- **Shared:** framework-agnostic OTLP and Sentry parsers in `shared/parsers/`, used by the worker, web app, and CLI alike.
+Run `teley --help` for all flags (`--host`, `--new`, `--demo`, `--json`, `--local`).
 
 </details>
 
 ## 🛠 Self-host
 
-Teley is a pnpm monorepo: `web/` (dashboard), `cli/` (terminal viewer), `workers/` (Cloudflare relay), plus shared `shared/` and `types/`.
+Teley is a pnpm monorepo: `web/` (dashboard), `cli/` (terminal viewer), `workers/` (Cloudflare worker), plus shared `shared/` and `types/`.
 
 ```bash
 pnpm install
@@ -212,7 +192,7 @@ pnpm install
 # Web dashboard
 cd web && pnpm dev            # http://localhost:3000
 
-# Relay worker (separate terminal)
+# Worker (separate terminal)
 cd web && pnpm dev:worker     # http://localhost:8787
 
 # CLI against your local worker
@@ -221,6 +201,16 @@ bun run dev --host localhost:8787
 ```
 
 Deploy the worker with `pnpm deploy:worker` and the static site with `pnpm deploy:static` (both from `web/`).
+
+<details>
+<summary>Tech stack</summary>
+
+- **Web:** Nuxt 4 (Vue 3 + TypeScript, SSR off), Tailwind CSS v4, Unovis charts, Dexie (IndexedDB), a `SharedWorker` for one WebSocket across tabs.
+- **CLI:** [OpenTUI](https://opentui.com) (React bindings) on Bun or Node. Reuses the shared parsers and the web app's `buildSpanTree`.
+- **Backend:** Cloudflare Workers + Durable Objects.
+- **Shared:** framework-agnostic OTLP and Sentry parsers in `shared/parsers/`, used by the worker, web app, and CLI alike.
+
+</details>
 
 ## License
 

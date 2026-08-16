@@ -5,7 +5,7 @@
 <h1 align="center">teley-cli</h1>
 
 <p align="center">
-  A live trace and log viewer for <a href="https://teley.dev">Teley</a>, in your terminal. Point any OpenTelemetry or Sentry SDK at the DSN it prints and watch spans arrive as a waterfall.
+  A live trace and log viewer for you and your agents, in your terminal. Point any OpenTelemetry or Sentry SDK at the DSN it prints.
 </p>
 
 <p align="center">
@@ -24,36 +24,31 @@
   <a href="#-what-you-get">Features</a> •
   <a href="#%EF%B8%8F-keys">Keys</a> •
   <a href="#-json-output">JSON output</a> •
-  <a href="#-local-mode">Local mode</a> •
-  <a href="#-coding-agents-mcp">MCP</a> •
-  <a href="#-what-the-cli-reports-about-itself">Self-reporting</a> •
-  <a href="#-how-it-connects">How it connects</a>
+  <a href="#%EF%B8%8F-local-mode">Local mode</a> •
+  <a href="#-mcp-for-coding-agents">MCP</a> •
+  <a href="#-what-the-cli-reports-about-itself">Self-reporting</a>
 </p>
 
 ---
 
-`teley-cli` generates a room DSN, connects to the Teley relay over WebSocket, and renders traces and logs as they stream in. No account, no config file, no data at rest beyond the room you are watching.
+`teley-cli` generates a DSN and renders traces and logs as they stream in. No account, no config file.
 
-It is the same room model as the [web dashboard](https://teley.dev), so you can watch a room in your terminal, in the browser, or both at once.
-
-Built with [OpenTUI](https://opentui.com) (React bindings), so the waterfall
-needs FFI: **Bun**, or Node 26.4+ with `--experimental-ffi`.
+Built with [OpenTUI](https://opentui.com) (React bindings), so the waterfall needs FFI: **Bun**, or Node 26.4+ with `--experimental-ffi`.
 
 ## ⚡ Run
 
 ```bash
-bunx teley-cli                         # live room against the deployed relay
+bunx teley-cli                         # live room, waterfall in your terminal
+bunx teley-cli mcp                     # serve the room to a coding agent over MCP
 bunx teley-cli --demo                  # sample data, no network
 bunx teley-cli --new                   # start a fresh room (new DSN)
-bunx teley-cli --host localhost:8787   # point at a local worker
 bunx teley-cli --json                  # no TUI, newline-delimited JSON on stdout
-bunx teley-cli mcp                     # serve the room to a coding agent over MCP
-bunx teley-cli --local                 # receive telemetry here, no relay involved
+bunx teley-cli --local                 # receive telemetry here, nothing leaves the machine
 ```
 
 The DSN and OTLP endpoint are printed in the header. Point your SDK at either one, run your app, and spans appear.
 
-> The TUI needs FFI, so it wants [Bun](https://bun.sh), or Node 26.4+ with `node --experimental-ffi`. `--json` and `mcp` run on any Node, `--local` is Bun-only (`Bun.serve`).
+> The TUI needs FFI, so either [Bun](https://bun.sh), or Node 26.4+ with `node --experimental-ffi` are needed. Everything else (`--json`, `mcp`, `--local`) runs on Node/Bun alike.
 
 ## 📡 Send your data
 
@@ -108,7 +103,7 @@ With the trace list focused, `↑`/`↓` moves between traces. With the waterfal
 
 ## 🧾 JSON output
 
-`--json` skips the TUI entirely and streams the room to stdout as newline-delimited JSON, one object per line. Same room, same relay, no terminal rendering, so it pipes and greps.
+`--json` skips the TUI entirely and streams the room to stdout as newline-delimited JSON, one object per line. Same room, no terminal rendering, so it pipes and greps.
 
 ```bash
 bunx teley-cli --json | jq 'select(.type == "trace" and .trace.status_code == 2)'
@@ -128,9 +123,9 @@ The first line is the session, so a script can read the DSN it should point an S
 
 Nothing else is written to stdout. Connection state stays out of the stream, and a fatal error (a room already claimed by another token) goes to stderr with exit code 1. `ctrl-c` exits 0.
 
-## 🔒 Local mode
+## 🏕️ Local mode
 
-`--local` makes this process the ingest endpoint. Your app posts OTLP or Sentry envelopes straight to it on localhost, and no relay is involved at all.
+`--local` makes the cli process the ingest endpoint. Your app posts OTLP or Sentry envelopes straight to it on localhost, and nothing leaves the machine.
 
 ```bash
 bunx teley-cli --local               # ingest on 127.0.0.1:8788
@@ -139,21 +134,11 @@ bunx teley-cli --local --port 0      # let the OS pick, printed in the header
 bunx teley-cli mcp --local           # same, serving an agent
 ```
 
-The DSN and OTLP endpoint in the header point at that port, so pointing an SDK at it is the same gesture as always:
+It accepts the same formats as teley.dev: JSON or protobuf, gzipped or not, and Sentry envelopes. The CLI still reports its own crashes; see [below](#-what-the-cli-reports-about-itself).
 
-```bash
-OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=http://localhost:8788/r/<room-id> npm start
-```
+## 🤖 MCP for Coding agents
 
-Use the `_TRACES_` form (or the exporter's `url` option): the plain `OTEL_EXPORTER_OTLP_ENDPOINT` appends `/v1/traces` to whatever you give it, which is not a room.
-
-Your app's telemetry never leaves the machine, there is nothing to deploy or reach, and there is no room to claim, so the "room already claimed" failure cannot happen. (The CLI still reports its own crashes; see [below](#-what-the-cli-reports-about-itself).) Ingest runs the same decoding the worker does (JSON or protobuf, gzip or not, Sentry envelopes), so what you see matches what the relay would have shown.
-
-The trade: a local room has no relay behind it, so the web dashboard cannot open it, and no second device or browser tab can watch along. `--local` composes with everything else here, so the TUI, `--json`, and `mcp` all work the same way.
-
-## 🤖 Coding agents (MCP)
-
-`teley mcp` serves the room over [MCP](https://modelcontextprotocol.io) on stdio, so an agent can instrument your app, run it, and read the traces back without a terminal. It speaks the 2026-07-28 spec (stateless: no session handshake, every tool call self-contained).
+`teley mcp` serves the room over [MCP](https://modelcontextprotocol.io) on stdio, so an agent can instrument your app, run it, and read the traces back without a terminal.
 
 ```bash
 claude mcp add teley -- bunx teley-cli mcp
@@ -187,24 +172,15 @@ The loop is: `get_dsn` → point the SDK at it → run the app → `wait_for_tra
 
 It watches the same room as the TUI and the web app, so you can follow along while the agent works.
 
-The room lives in the server's memory and is never written to disk, so `teley mcp` leaves nothing behind either. It listens from the moment your MCP client starts it, and starts empty if that client restarts it: the relay keeps no history, so anything sent while no client was connected is gone.
+It starts empty every time your MCP client starts it.
 
 ## 📮 What the CLI reports about itself
 
-`teley-cli` reports its own faults to Teley's Sentry project, the way any installed program does. That is the CLI's health, and it is a different thing from the telemetry you point at it.
+`teley-cli` reports its own faults, the way any installed program does. That is the CLI's health, and it is a different thing from the telemetry you point at it.
 
-**Never sent, in any mode:** your spans, logs, metrics, attribute values or payload bodies, and no room ID, receive token or DSN. Error text from anything that touched a payload is reduced to the error's class name, because a parse error can quote the payload it choked on. Under `--local` your telemetry still never leaves the machine.
+**Never sent, in any mode:** your spans, logs, metrics, attribute values or payload bodies.
 
-**Sent:** crashes and stack traces from the CLI's own code, and counters about its operation, which mode it ran in, how many payloads it accepted or rejected and why, relay close codes, and how long each MCP tool took and how it ended.
-
-Point it elsewhere with `TELEY_CLI_SENTRY_DSN`, and a source build with no DSN compiled in reports nothing at all.
-
-## 🔌 How it connects
-
-The CLI is just another relay client, the same path the web app takes. It reuses the shared domain types (`shared/parsers/types.ts`) and the shared `buildSpanTree` (`shared/parsers/span-tree.ts`).
-
-- **Credentials:** `roomId` (nanoid 12) and `receiveToken` (nanoid 24), persisted to `~/.teley/session.json` and reused across runs. `--new` rolls a fresh pair.
-- **Host resolution:** `--host` > `$TELEY_HOST` > `teley.dev`. Non-local hosts use `wss://` and `https://`; localhost uses plain `ws://` and `http://`.
+**Sent:** crashes and stack traces from the CLI's own code, and counters about its operation, which mode it ran in, how many payloads it accepted or rejected and why, connection close codes, and how long each MCP tool took and how it ended. A crash also carries the runtime it ran under, the OS and architecture, and the CLI's resolved dependency versions.
 
 ## 🛠️ Local development
 
