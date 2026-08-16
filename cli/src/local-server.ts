@@ -24,6 +24,8 @@ import {
   readOTLPRequest,
   extractRoomIdFromSentryAuth,
   PayloadDecodeError,
+  PayloadTooLargeError,
+  MAX_PAYLOAD_BYTES,
 } from '../../shared/parsers';
 import type { SourceEvents, TelemetrySource } from './source';
 import {
@@ -141,6 +143,7 @@ async function handle(
 
   if (request.method === 'OPTIONS') {
     return new Response(null, {
+      status: 204,
       headers: { ...CORS_HEADERS, 'Access-Control-Max-Age': '86400' },
     });
   }
@@ -158,6 +161,17 @@ async function handle(
       return await ingestSentry(request, events);
     }
   } catch (error) {
+    const protocol = url.pathname.startsWith('/api/') ? 'sentry' : 'otlp';
+
+    // Refused on size, not on content, so it gets the status that says so.
+    // Checked first because it is a PayloadDecodeError too.
+    if (error instanceof PayloadTooLargeError) {
+      reportPayloadFailure(METRIC.INGEST_REJECTED, 'too_large', error, {
+        protocol,
+      });
+      return json({ error: error.message }, 413);
+    }
+
     // A payload we cannot decode is the sender's mistake, and answering
     // 500 would have the exporter retry the same bytes forever. The
     // parsers raise PayloadDecodeError for exactly that case, so anything
@@ -165,7 +179,7 @@ async function handle(
     if (error instanceof PayloadDecodeError || error instanceof SyntaxError) {
       // The message can quote the payload, so only its shape is reported.
       reportPayloadFailure(METRIC.INGEST_REJECTED, 'undecodable', error, {
-        protocol: url.pathname.startsWith('/api/') ? 'sentry' : 'otlp',
+        protocol,
       });
       return json({ error: error.message }, 400);
     }
@@ -197,10 +211,10 @@ async function handle(
   );
 }
 
-// What Bun.serve enforced by default and node:http does not. A local exporter
-// gone wrong is the realistic way to meet this, and buffering whatever it sends
-// is the part that would hurt.
-const MAX_BODY_BYTES = 128 * 1024 * 1024;
+// What Bun.serve enforced by default and node:http does not. The number is the
+// parsers' own ceiling rather than one of ours: anything above it cannot
+// survive decompression either, so reading it in only buys a refusal that was
+// already certain.
 
 // Buffered rather than streamed, because every parser downstream opens with
 // request.arrayBuffer() anyway, and handing Request a stream needs `duplex`,
@@ -221,7 +235,7 @@ async function readBody(
 
   for await (const chunk of req) {
     size += chunk.length;
-    if (size > MAX_BODY_BYTES) {
+    if (size > MAX_PAYLOAD_BYTES) {
       res.destroy();
       return null;
     }
@@ -284,7 +298,7 @@ async function respond(
     // Checked against the declared size first, since that is the last point at
     // which both runtimes can still answer with a status rather than a reset.
     const declared = Number(req.headers['content-length']);
-    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+    if (Number.isFinite(declared) && declared > MAX_PAYLOAD_BYTES) {
       await send(res, json({ error: 'Payload too large' }, 413));
       return;
     }

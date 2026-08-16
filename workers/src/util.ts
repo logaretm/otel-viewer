@@ -21,6 +21,7 @@ export { redactRoomId as roomTag } from '../../shared/observability';
 
 export function handleCORS(): Response {
   return new Response(null, {
+    status: 204,
     headers: { ...CORS_HEADERS, 'Access-Control-Max-Age': '86400' },
   });
 }

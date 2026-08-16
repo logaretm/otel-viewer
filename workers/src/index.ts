@@ -13,6 +13,7 @@ import {
   readOTLPRequest,
   OTLPDecodeError,
   PayloadDecodeError,
+  PayloadTooLargeError,
 } from '../../shared/parsers';
 import { handleCORS, corsResponse, roomTag } from './util';
 import { METRIC, redactUrl } from '../../shared/observability';
@@ -490,6 +491,30 @@ async function handleOTLPIngest(
       });
     }
   } catch (error: any) {
+    // Refused on size rather than on content, so it gets the status that says
+    // so. Not an OTLPDecodeError, and it has to be answered here rather than
+    // fall through: the sender needs to learn its batch is too big, not read a
+    // 500 and retry the same bytes forever.
+    if (error instanceof PayloadTooLargeError) {
+      console.error('[OTLP] Oversize body:', error.message);
+      Sentry.metrics.count(METRIC.INGEST_REJECTED, 1, {
+        attributes: {
+          surface: 'worker',
+          protocol: 'otlp',
+          reason: 'too_large',
+        },
+      });
+      Sentry.logger.warn('OTLP ingest rejected: oversize body', {
+        room: roomTag(roomId),
+        content_length: request.headers.get('content-length') ?? 'none',
+        content_encoding: request.headers.get('content-encoding') ?? 'none',
+      });
+      return new Response(JSON.stringify({ error: error.message }), {
+        status: 413,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
     // A body we cannot decode is the sender's problem, and answering 500 makes
     // it ours: the exporter retries the same bytes on a backoff and each round
     // trip files another error report. 400 stops the loop at the source.
