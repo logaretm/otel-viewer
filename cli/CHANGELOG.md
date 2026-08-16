@@ -1,5 +1,17 @@
 # teley-cli
 
+## 0.4.0
+
+### Minor Changes
+
+- [#54](https://github.com/logaretm/teley/pull/54) [`088138e`](https://github.com/logaretm/teley/commit/088138e36e908f69a603c73d96b47074996e51de) Thanks [@logaretm](https://github.com/logaretm)! - Run `--local` on Node as well as bun. Its ingest server moved from `Bun.serve` to `node:http`, which both runtimes implement, so there is one server rather than one per runtime and the two are provably serving the same routes. The TUI still needs bun or Node 26.4+ with `--experimental-ffi`.
+
+### Patch Changes
+
+- [#54](https://github.com/logaretm/teley/pull/54) [`088138e`](https://github.com/logaretm/teley/commit/088138e36e908f69a603c73d96b47074996e51de) Thanks [@logaretm](https://github.com/logaretm)! - Report the CLI's own health through `@sentry/node` instead of `@sentry/bun`, and name the integrations it loads rather than subtracting from the defaults. Nothing the bun SDK added was in use: its two bun-server integrations were already filtered out (and crash `init` on one runtime each if they are not), and the CLI makes no outgoing HTTP for its fetch instrumentation to see. Less is sent about the machine as a result, since the context integration's boot time, CPU model, memory size, locale and timezone are gone, while the runtime and OS it ran on are now reported correctly under both bun and node.
+
+- [#56](https://github.com/logaretm/teley/pull/56) [`7004f4a`](https://github.com/logaretm/teley/commit/7004f4ac80d074828777614745dcfcad2f34877f) Thanks [@logaretm](https://github.com/logaretm)! - Answer an oversize payload with 413 rather than 400, and a CORS preflight with 204 rather than 200. The decompression ceiling and `--local`'s own body cap disagreed about the same refusal, one calling it undecodable and the other calling it too large, so the ceiling is now a distinct error and both are the one number the parsers already enforce.
+
 ## 0.3.0
 
 ### Minor Changes
