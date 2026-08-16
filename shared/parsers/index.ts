@@ -59,7 +59,7 @@ export {
 } from './otlp-protobuf';
 
 // Whose fault a decode failure is
-export { PayloadDecodeError } from './errors';
+export { PayloadDecodeError, PayloadTooLargeError } from './errors';
 
 // Reading an OTLP request off the wire (shared by the worker and the CLI's
 // local ingest server)
@@ -67,6 +67,7 @@ export {
   readOTLPRequest,
   extractRoomIdFromSentryAuth,
   OTLPDecodeError,
+  MAX_PAYLOAD_BYTES,
   isTraceRequest,
   isLogsRequest,
   isMetricsRequest,

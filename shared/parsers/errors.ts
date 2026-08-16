@@ -20,3 +20,17 @@ export class PayloadDecodeError extends Error {
     this.name = 'PayloadDecodeError';
   }
 }
+
+/**
+ * The payload was refused on size rather than on content, so it gets 413 rather
+ * than the 400 the rest of this file is about. Still the sender's mistake, and
+ * still not worth an exception, which is why it extends the type above: every
+ * catch that already treats a decode failure as theirs keeps working, and only
+ * the two servers that answer a status care about the difference.
+ */
+export class PayloadTooLargeError extends PayloadDecodeError {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'PayloadTooLargeError';
+  }
+}

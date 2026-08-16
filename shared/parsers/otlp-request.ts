@@ -18,7 +18,7 @@ import {
   type OTLPSignal,
 } from './otlp-protobuf';
 import { ProtoError } from './protobuf-reader';
-import { PayloadDecodeError } from './errors';
+import { PayloadDecodeError, PayloadTooLargeError } from './errors';
 
 export function isTraceRequest(
   body: Record<string, any>,
@@ -79,8 +79,11 @@ export async function readOTLPRequest(request: Request): Promise<OTLPRequest> {
   try {
     bytes = await decompress(raw);
   } catch (error) {
-    // Everything this can throw is about the bytes themselves: a corrupt stream,
-    // or one that expands past the ceiling.
+    // Everything this can throw is about the bytes themselves: a corrupt
+    // stream, or one that expands past the ceiling. The second already carries
+    // the answer it wants, and relabelling it here is what used to turn an
+    // oversize body into a 400.
+    if (error instanceof PayloadTooLargeError) throw error;
     throw new OTLPDecodeError(decodeMessage(error), { cause: error });
   }
 
@@ -182,8 +185,12 @@ function readProtobuf(bytes: Uint8Array): OTLPRequest {
  * memory limit. Real OTLP batches are a few megabytes at the very most, and the
  * ceiling has to be enforced while the stream is read: buffering first and
  * measuring afterwards commits the memory we are trying not to spend.
+ *
+ * Exported because a server that buffers a body before handing it here wants
+ * the same number: reading in more than could ever survive decompression is
+ * memory spent to reach a refusal that was already certain.
  */
-const MAX_DECOMPRESSED_BYTES = 16 * 1024 * 1024;
+export const MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
 
 /**
  * Sniffs the compression rather than trusting Content-Encoding, because the
@@ -218,10 +225,10 @@ async function decompress(bytes: Uint8Array): Promise<Uint8Array> {
     if (done) break;
 
     size += value.byteLength;
-    if (size > MAX_DECOMPRESSED_BYTES) {
+    if (size > MAX_PAYLOAD_BYTES) {
       await reader.cancel();
-      throw new Error(
-        `decompressed body exceeds ${MAX_DECOMPRESSED_BYTES} bytes`,
+      throw new PayloadTooLargeError(
+        `decompressed body exceeds ${MAX_PAYLOAD_BYTES} bytes`,
       );
     }
     chunks.push(value);
