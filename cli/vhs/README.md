@@ -11,12 +11,12 @@ they can be reshot when the TUI changes instead of being redrawn by hand.
 Output goes straight to `docs/screenshots/`. Raw captures are kept in `raw/` for
 inspection and are gitignored.
 
-| Tape              | Produces                     | Shows                                            |
-| ----------------- | ---------------------------- | ------------------------------------------------ |
-| `navigation.tape` | `teley-cli-navigation.gif`   | Every key in the readme's key table, in order    |
-| `mcp.tape`        | `teley-cli-mcp.gif`          | The MCP loop against a real `teley mcp --local`  |
-| `json.tape`       | `teley-cli-json.png`         | `--json` piped through `jq`                      |
-| `local.tape`      | `teley-cli-local.png`        | `--local`, with localhost endpoints in the header |
+| Tape              | Produces                   | Shows                                             |
+| ----------------- | -------------------------- | ------------------------------------------------- |
+| `navigation.tape` | `teley-cli-navigation.gif` | Every key in the readme's key table, in order     |
+| `mcp.tape`        | `teley-cli-mcp.gif`        | The MCP loop against a real `teley mcp --local`   |
+| `json.tape`       | `teley-cli-json.png`       | `--json` piped through `jq`                       |
+| `local.tape`      | `teley-cli-local.png`      | `--local`, with localhost endpoints in the header |
 
 ## Prerequisites
 

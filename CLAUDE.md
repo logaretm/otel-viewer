@@ -227,13 +227,13 @@ bottom right, near-black in the middle so the dark UI still separates from it.
 Base `rgb(10, 11, 24)`, then blend each blob over it in order. Positions and
 radii are fractions of the canvas, colors are the blob's own:
 
-| x    | y    | radius | color                |
-| ---- | ---- | ------ | -------------------- |
-| 0.08 | 0.06 | 0.62   | `rgb(79, 70, 229)`   |
-| 0.92 | 0.10 | 0.55   | `rgb(124, 58, 237)`  |
-| 0.78 | 0.95 | 0.60   | `rgb(16, 132, 129)`  |
-| 0.20 | 0.98 | 0.52   | `rgb(37, 39, 96)`    |
-| 0.50 | 0.45 | 0.40   | `rgb(30, 27, 75)`    |
+| x    | y    | radius | color               |
+| ---- | ---- | ------ | ------------------- |
+| 0.08 | 0.06 | 0.62   | `rgb(79, 70, 229)`  |
+| 0.92 | 0.10 | 0.55   | `rgb(124, 58, 237)` |
+| 0.78 | 0.95 | 0.60   | `rgb(16, 132, 129)` |
+| 0.20 | 0.98 | 0.52   | `rgb(37, 39, 96)`   |
+| 0.50 | 0.45 | 0.40   | `rgb(30, 27, 75)`   |
 
 For each pixel at fractional position `(fx, fy)` with `aspect = width / height`:
 

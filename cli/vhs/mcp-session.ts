@@ -20,7 +20,8 @@ const decoder = new TextDecoder();
 const pending = new Map<number, (v: any) => void>();
 let buf = '';
 
-(async () => {
+// Reads replies for the whole session; it ends when the server's stdout closes.
+void (async () => {
   for (;;) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -138,8 +139,7 @@ await sleep(300);
 await typeOut(
   `${ACCENT}${BOLD}→ wait_for_traces${R}${DIM} { idle_ms: 1500 }${R}`,
 );
-const waited =
-  (await waiting)?.result?.content?.[0]?.text ?? '(no response)';
+const waited = (await waiting)?.result?.content?.[0]?.text ?? '(no response)';
 body(waited);
 out();
 await sleep(400);
