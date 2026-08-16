@@ -7,7 +7,14 @@
 //
 // The trade is that a local room has no relay behind it, so the web dashboard
 // cannot open it. Terminal and MCP work the same either way.
+//
+// node:http rather than Bun.serve, because Bun implements it too and the rest
+// of the CLI already runs under either runtime. One server means bun and node
+// are provably serving the same routes, instead of a second implementation
+// that only gets exercised on whichever runtime nobody runs.
 
+import { createServer } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   parseSentryEnvelope,
   processSentryEnvelope,
@@ -123,6 +130,186 @@ const KNOWN_SUFFIXES = new Set(['/v1/traces', '/v1/logs', '/v1/metrics']);
 const OTLP_ROUTE = /^\/r\/([a-zA-Z0-9_-]+)$/;
 const SENTRY_ROUTE = /^\/api\/\d+\/envelope\/?$/;
 
+// The routes themselves, in the same Request/Response terms the worker and the
+// parsers already speak. The node:http plumbing below is only what converts
+// into and out of this.
+async function handle(
+  request: Request,
+  events: SourceEvents,
+): Promise<Response> {
+  const url = new URL(request.url);
+
+  if (request.method === 'OPTIONS') {
+    return new Response(null, {
+      headers: { ...CORS_HEADERS, 'Access-Control-Max-Age': '86400' },
+    });
+  }
+
+  try {
+    if (request.method === 'POST' && OTLP_ROUTE.test(url.pathname)) {
+      return await ingestOTLP(request, events);
+    }
+
+    if (
+      request.method === 'POST' &&
+      SENTRY_ROUTE.test(url.pathname) &&
+      extractRoomIdFromSentryAuth(request)
+    ) {
+      return await ingestSentry(request, events);
+    }
+  } catch (error) {
+    // A payload we cannot decode is the sender's mistake, and answering
+    // 500 would have the exporter retry the same bytes forever. The
+    // parsers raise PayloadDecodeError for exactly that case, so anything
+    // else reaching here is ours.
+    if (error instanceof PayloadDecodeError || error instanceof SyntaxError) {
+      // The message can quote the payload, so only its shape is reported.
+      reportPayloadFailure(METRIC.INGEST_REJECTED, 'undecodable', error, {
+        protocol: url.pathname.startsWith('/api/') ? 'sentry' : 'otlp',
+      });
+      return json({ error: error.message }, 400);
+    }
+
+    // Not the sender's fault: a bug of ours, reached with a payload that
+    // decoded fine. Nothing else reports this, and nothing else answers it
+    // either: node:http leaves a request whose handler rejected hanging
+    // until the exporter times out, so the 500 is produced here rather than
+    // rethrown for the runtime to turn into one.
+    captureException(error, { area: 'ingest' });
+    return json({ error: 'Internal error' }, 500);
+  }
+
+  // Almost always an exporter appending a signal path, because
+  // OTEL_EXPORTER_OTLP_ENDPOINT is defined to do that. The SDK swallows
+  // this response, so without the counter it fails silently on both ends.
+  const suffix = url.pathname.match(/^\/r\/[a-zA-Z0-9_-]+(\/.*)$/)?.[1];
+  count(METRIC.INGEST_UNROUTED, {
+    method: request.method,
+    suffix: suffix && KNOWN_SUFFIXES.has(suffix) ? suffix : 'other',
+  });
+  return json(
+    {
+      error: suffix
+        ? `No ingest route for ${suffix}. Post OTLP to /r/{roomId} itself; OTEL_EXPORTER_OTLP_ENDPOINT appends the signal path, so use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or the exporter's url option.`
+        : 'Not found',
+    },
+    404,
+  );
+}
+
+// What Bun.serve enforced by default and node:http does not. A local exporter
+// gone wrong is the realistic way to meet this, and buffering whatever it sends
+// is the part that would hurt.
+const MAX_BODY_BYTES = 128 * 1024 * 1024;
+
+// Buffered rather than streamed, because every parser downstream opens with
+// request.arrayBuffer() anyway, and handing Request a stream needs `duplex`,
+// which is the one part of this that is not portable across the two runtimes.
+//
+// A body that runs past the ceiling without having declared it takes the
+// connection down and resolves null, because a status is no longer deliverable
+// by then: abandoning the request stream mid-body leaves bun unable to put one
+// on the wire (it answers an empty 200), and a false success is worse for the
+// exporter than a dropped connection. Anything that sends Content-Length, which
+// is every real exporter, is turned away with a 413 before reaching here.
+async function readBody(
+  req: IncomingMessage,
+  res: ServerResponse,
+): Promise<Uint8Array | null> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > MAX_BODY_BYTES) {
+      res.destroy();
+      return null;
+    }
+    chunks.push(chunk);
+  }
+
+  return Buffer.concat(chunks);
+}
+
+function toRequest(req: IncomingMessage, body: Uint8Array): Request {
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(req.headers)) {
+    if (value === undefined) continue;
+    // A repeated header arrives as an array. Nothing the routes read is ever
+    // sent twice, and joining is what Headers itself would do with them.
+    headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+  }
+
+  const method = req.method ?? 'GET';
+  // The authority is never meaningful on a loopback socket. It is here because
+  // Request demands an absolute URL and the routes parse one back out of it.
+  const url = new URL(
+    req.url ?? '/',
+    `http://${req.headers.host ?? 'localhost'}`,
+  );
+
+  return new Request(url.href, {
+    method,
+    headers,
+    // Handing either of these a body is a TypeError, and neither carries one.
+    body: method === 'GET' || method === 'HEAD' ? undefined : body,
+  });
+}
+
+async function send(res: ServerResponse, response: Response): Promise<void> {
+  const body = Buffer.from(await response.arrayBuffer());
+  if (res.writableEnded) return;
+  res.writeHead(response.status, Object.fromEntries(response.headers));
+  res.end(body);
+}
+
+// An exporter that gave up on a slow response, which is its timeout rather than
+// a fault of ours, so it is answered with nothing and reported as nothing.
+const DISCONNECT_CODES = new Set(['ECONNRESET', 'ECONNABORTED', 'EPIPE']);
+
+function isDisconnect(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    'code' in error &&
+    DISCONNECT_CODES.has(String(error.code))
+  );
+}
+
+async function respond(
+  req: IncomingMessage,
+  res: ServerResponse,
+  events: SourceEvents,
+): Promise<void> {
+  try {
+    // Checked against the declared size first, since that is the last point at
+    // which both runtimes can still answer with a status rather than a reset.
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
+      await send(res, json({ error: 'Payload too large' }, 413));
+      return;
+    }
+
+    const body = await readBody(req, res);
+    // Over the ceiling undeclared, so the connection is already gone.
+    if (!body) return;
+
+    await send(res, await handle(toRequest(req, body), events));
+  } catch (error) {
+    if (isDisconnect(error)) {
+      res.destroy();
+      return;
+    }
+
+    // handle() answers its own failures, so reaching here means the request
+    // never became one: a body we could not read, or headers we could not turn
+    // into a Request.
+    captureException(error, { area: 'ingest' });
+    await send(res, json({ error: 'Internal error' }, 500)).catch(() =>
+      res.destroy(),
+    );
+  }
+}
+
 export interface LocalIngest {
   // The port actually bound, which differs from the requested one when 0 was
   // passed to let the OS choose.
@@ -130,91 +317,53 @@ export interface LocalIngest {
   source: TelemetrySource;
 }
 
-// Binds immediately, so a port collision surfaces at startup as a clear message
-// rather than from inside whichever mode later asks for the room. Ingest is
-// unauthenticated, the same as the relay's, but the socket is bound to loopback
-// so only this machine can reach it.
-export function createLocalIngest(
+// Binds before returning, so a port collision surfaces at startup as a clear
+// message rather than from inside whichever mode later asks for the room.
+// Ingest is unauthenticated, the same as the relay's, but the socket is bound
+// to loopback so only this machine can reach it.
+export async function createLocalIngest(
   port: number,
   hostname = '127.0.0.1',
-): LocalIngest {
+): Promise<LocalIngest> {
   // Assigned when a mode subscribes; requests that arrive first are parsed and
   // dropped, which only happens in the instant between bind and subscribe.
   let events: SourceEvents = {};
 
-  const server = Bun.serve({
-    port,
-    hostname,
-    async fetch(request) {
-      const url = new URL(request.url);
+  const server = createServer((req, res) => {
+    // respond() owns every failure, including its own, so nothing escapes into
+    // an unhandled rejection that would take the process down mid-session.
+    void respond(req, res, events);
+  });
 
-      if (request.method === 'OPTIONS') {
-        return new Response(null, {
-          headers: { ...CORS_HEADERS, 'Access-Control-Max-Age': '86400' },
-        });
-      }
-
-      try {
-        if (request.method === 'POST' && OTLP_ROUTE.test(url.pathname)) {
-          return await ingestOTLP(request, events);
-        }
-
-        if (
-          request.method === 'POST' &&
-          SENTRY_ROUTE.test(url.pathname) &&
-          extractRoomIdFromSentryAuth(request)
-        ) {
-          return await ingestSentry(request, events);
-        }
-      } catch (error) {
-        // A payload we cannot decode is the sender's mistake, and answering
-        // 500 would have the exporter retry the same bytes forever. The
-        // parsers raise PayloadDecodeError for exactly that case, so anything
-        // else reaching here is ours.
-        if (
-          error instanceof PayloadDecodeError ||
-          error instanceof SyntaxError
-        ) {
-          // The message can quote the payload, so only its shape is reported.
-          reportPayloadFailure(METRIC.INGEST_REJECTED, 'undecodable', error, {
-            protocol: url.pathname.startsWith('/api/') ? 'sentry' : 'otlp',
-          });
-          return json({ error: error.message }, 400);
-        }
-
-        // Not the sender's fault: a bug of ours, reached with a payload that
-        // decoded fine. Bun answers 500 and awaits the handler itself, so
-        // nothing else would report this now that the Bun server integration
-        // (which used to capture it by accident) is gone.
-        captureException(error, { area: 'ingest' });
-        throw error;
-      }
-
-      // Almost always an exporter appending a signal path, because
-      // OTEL_EXPORTER_OTLP_ENDPOINT is defined to do that. The SDK swallows
-      // this response, so without the counter it fails silently on both ends.
-      const suffix = url.pathname.match(/^\/r\/[a-zA-Z0-9_-]+(\/.*)$/)?.[1];
-      count(METRIC.INGEST_UNROUTED, {
-        method: request.method,
-        suffix: suffix && KNOWN_SUFFIXES.has(suffix) ? suffix : 'other',
-      });
-      return json(
-        {
-          error: suffix
-            ? `No ingest route for ${suffix}. Post OTLP to /r/{roomId} itself; OTEL_EXPORTER_OTLP_ENDPOINT appends the signal path, so use OTEL_EXPORTER_OTLP_TRACES_ENDPOINT or the exporter's url option.`
-            : 'Not found',
-        },
-        404,
-      );
-    },
+  // A taken port arrives on the 'error' event rather than as a throw, so it has
+  // to become a rejection for the caller that turns it into the "pass --port"
+  // message.
+  await new Promise<void>((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(port, hostname, () => {
+      server.removeListener('error', reject);
+      resolve();
+    });
   });
 
   const source: TelemetrySource = (subscriber) => {
     events = subscriber;
     // Nothing to connect to, so the room is live as soon as the socket binds.
     subscriber.onStatus?.('connected');
-    return { close: () => void server.stop(true) };
+    return {
+      close: () => {
+        // close() alone only stops new connections, and an exporter holding a
+        // keep-alive socket would keep the process up after the TUI is gone.
+        server.closeAllConnections();
+        server.close();
+      },
+    };
   };
 
-  return { port: server.port ?? port, source };
+  const address = server.address();
+
+  return {
+    port: typeof address === 'object' && address ? address.port : port,
+    source,
+  };
 }

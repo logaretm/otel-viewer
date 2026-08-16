@@ -1,6 +1,6 @@
-// Only two things in the CLI are Bun-only: OpenTUI's renderer, which loads a
-// native library over FFI, and --local's ingest server, which is Bun.serve.
-// --json and mcp run on plain Node as they are.
+// The one thing in the CLI that needs more than a plain Node is OpenTUI's
+// renderer, which loads a native library over FFI. --json, mcp and --local run
+// as they are.
 
 // Node grew FFI behind --experimental-ffi in 26.4, which is enough for
 // OpenTUI's renderer.
@@ -32,13 +32,5 @@ export function rendererHelp(error: unknown): string {
     ...(nodeHasFfi()
       ? [`  node --experimental-ffi ${process.argv[1] ?? 'teley'}`]
       : []),
-  ].join('\n');
-}
-
-export function localIngestHelp(): string {
-  return [
-    `teley: --local needs bun, since its ingest server is Bun.serve (this is Node ${process.versions.node}).`,
-    '',
-    '  bunx teley-cli --local',
   ].join('\n');
 }
