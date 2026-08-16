@@ -80,7 +80,7 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-span-details.png" alt="Span attributes panel next to the waterfall" width="100%">
-  <br><em>Focus the waterfall with <code>tab</code>, then walk spans with <code>↑</code>/<code>↓</code>. The panel follows the selection.</em>
+  <br><em>The span panel sits beside the waterfall: kind, duration, status, and every attribute on the selected span.</em>
 </p>
 
 <p align="center">
@@ -89,6 +89,11 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 </p>
 
 ## ⌨️ Keys
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-navigation.gif" alt="Walking the trace list, the waterfall, the header links, and the log stream with the keyboard" width="100%">
+  <br><em>Walking the trace list, then <code>tab</code> into the waterfall (the list collapses, the span panel appears), <code>tab</code> again to copy an endpoint, then <code>→</code> into the logs.</em>
+</p>
 
 | Key                      | Action                                        |
 | ------------------------ | --------------------------------------------- |
@@ -110,6 +115,11 @@ bunx teley-cli --json | jq 'select(.type == "trace" and .trace.status_code == 2)
 bunx teley-cli --json > run.ndjson         # keep a run for later
 bunx teley-cli --json --demo               # sample data, to see the shape
 ```
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-json.png" alt="Piping the JSON stream through jq to read the session line and filter traces" width="100%">
+  <br><em>Three runs against the demo data: the session line, then every trace, then only the ones that failed.</em>
+</p>
 
 The first line is the session, so a script can read the DSN it should point an SDK at. Every line after it is telemetry:
 
@@ -135,6 +145,11 @@ bunx teley-cli mcp --local           # same, serving an agent
 ```
 
 It accepts the same formats as teley.dev: JSON or protobuf, gzipped or not, and Sentry envelopes. The CLI still reports its own crashes; see [below](#-what-the-cli-reports-about-itself).
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-local.png" alt="The header showing localhost ingest endpoints, with a trace that never left the machine" width="100%">
+  <br><em>Same view, but the endpoints in the header are on <code>localhost</code>: that trace was posted to this process and went nowhere else.</em>
+</p>
 
 ## 🤖 MCP for Coding agents
 
@@ -169,6 +184,13 @@ The loop is: `get_dsn` → point the SDK at it → run the app → `wait_for_tra
   +10.0ms    GET inventory-service            59.0ms  client
   +80.0ms    db.query orders                 120.0ms  client  ERROR
 ```
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-mcp.gif" alt="An agent calling get_dsn, running the app, then wait_for_traces and get_trace over MCP" width="100%">
+  <br><em>The whole loop over stdio: <code>get_dsn</code>, run the app against it, <code>wait_for_traces</code>, then <code>get_trace</code> for the span tree and the attributes on the span that failed.</em>
+</p>
+
+Call `wait_for_traces` before or while the app runs, not after it exits: it reports what arrives from the moment it is called.
 
 It watches the same room as the TUI and the web app, so you can follow along while the agent works.
 
