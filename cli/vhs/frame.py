@@ -162,15 +162,40 @@ def process_png(src, dst, width, s):
     return Image.open(dst).size
 
 
-def process_gif(src, dst, width, s):
+def render_frames(src, width, s):
     src_im = Image.open(src)
     framer = Framer(src_im.size, s)
-
     frames, durations = [], []
     for i in range(src_im.n_frames):
         src_im.seek(i)
         durations.append(src_im.info.get("duration", 40))
         frames.append(framer.render(src_im.convert("RGB"), width))
+    return frames, durations
+
+
+def dedupe(frames, durations):
+    """Collapse runs of identical frames, adding their durations together.
+
+    vhs records at a fixed framerate, so a TUI that changes twenty times over
+    half a minute still arrives as hundreds of frames. Almost all of them are
+    byte-identical to the one before. Dropping them is what makes it affordable
+    to write the animation at the same 2000px the stills use.
+    """
+    out_frames, out_durations, prev = [], [], None
+    for frame, duration in zip(frames, durations):
+        raw = frame.tobytes()
+        if raw == prev:
+            out_durations[-1] += duration
+        else:
+            out_frames.append(frame)
+            out_durations.append(duration)
+            prev = raw
+    return out_frames, out_durations
+
+
+def process_gif(src, dst, width, s):
+    frames, durations = render_frames(src, width, s)
+    frames, durations = dedupe(frames, durations)
 
     # One palette for every frame, so the static gradient is bit-identical
     # between them and the delta encoder has almost nothing to store.
@@ -207,7 +232,7 @@ def process_gif(src, dst, width, s):
         optimize=True,
         disposal=1,
     )
-    return frames[0].size
+    return frames[0].size, len(frames)
 
 
 def main():
@@ -218,11 +243,13 @@ def main():
     ap.add_argument("--scale", type=int, default=2, help="capture pixel ratio")
     args = ap.parse_args()
 
+    width = args.width or 2000
     if args.src.lower().endswith(".gif"):
-        size = process_gif(args.src, args.dst, args.width or 1200, args.scale)
+        size, count = process_gif(args.src, args.dst, width, args.scale)
+        print(f"{args.dst}  {size[0]}x{size[1]}  {count} frames")
     else:
-        size = process_png(args.src, args.dst, args.width or 2000, args.scale)
-    print(f"{args.dst}  {size[0]}x{size[1]}")
+        size = process_png(args.src, args.dst, width, args.scale)
+        print(f"{args.dst}  {size[0]}x{size[1]}")
 
 
 if __name__ == "__main__":

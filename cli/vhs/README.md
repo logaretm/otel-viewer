@@ -55,5 +55,7 @@ costs almost nothing per frame.
 - `mcp-session.ts` calls `wait_for_traces` while the app under test is still
   running. That tool only reports what arrives after it is called, so calling
   it once a short-lived app has exited returns nothing.
-- GIFs are written at 1200px wide rather than the 2000px the spec gives for
-  stills, since every frame carries the gradient.
+- Animations are written at the same 2000px as the stills. vhs records at a
+  fixed framerate, so a 33s navigation capture arrives as 832 frames of which
+  only 21 differ from the one before; `frame.py` collapses the duplicates and
+  adds their durations together, which is what pays for the full width.

@@ -34,7 +34,7 @@ has() { [[ " ${targets[*]} " == *" $1 "* ]]; }
 if has navigation; then
   echo "==> navigation"
   vhs navigation.tape
-  python3 frame.py raw/navigation.gif "$OUT/teley-cli-navigation.gif" --width 1200
+  python3 frame.py raw/navigation.gif "$OUT/teley-cli-navigation.gif"
 fi
 
 if has mcp; then
@@ -42,7 +42,7 @@ if has mcp; then
   pkill -f "index.tsx mcp" 2>/dev/null || true
   sleep 1
   vhs mcp.tape
-  python3 frame.py raw/mcp.gif "$OUT/teley-cli-mcp.gif" --width 1200
+  python3 frame.py raw/mcp.gif "$OUT/teley-cli-mcp.gif"
 fi
 
 if has json; then

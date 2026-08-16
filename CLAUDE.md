@@ -307,8 +307,11 @@ cd cli/vhs && ./record.sh json     # navigation | mcp | json | local
   gives exactly 140 columns. Each tape sets `Height` to `56 + rows * 38.26`.
 - vhs cannot parse an absolute path after `Output` or `Source`, and `Screenshot`
   needs a `Sleep` after it or the file is never written.
-- Recordings use a throwaway room id, never a real one, and GIFs are written at
-  1200px wide rather than 2000 since every frame carries the gradient.
+- Recordings use a throwaway room id, never a real one.
+- Animations go out at the same 2000px as the stills. Anything narrower reads as
+  soft next to them, and it is affordable because vhs records at a fixed
+  framerate: a 33s capture is 832 frames of which 21 differ, so `frame.py`
+  collapses the duplicates and adds their durations together before encoding.
 - `cli/vhs/README.md` has the rest.
 
 ## Architecture Notes
