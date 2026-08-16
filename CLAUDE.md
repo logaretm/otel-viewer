@@ -212,6 +212,105 @@ The `Publish CLI` workflow also takes a manual dispatch: `release` mode with a
 If the release PR ever fails to open, check Settings → Actions → General →
 **Allow GitHub Actions to create and approve pull requests**.
 
+## README Screenshots
+
+Everything in `docs/screenshots/` shares one treatment: the raw capture sits in
+a rounded macOS-style window, on an indigo mesh gradient. Match it exactly when
+adding or reshooting an image, otherwise the READMEs stop reading as one set.
+
+### The gradient
+
+A mesh gradient, not a linear one: a dark base with five colored blobs whose
+influence falls off smoothly. Deep indigo and violet across the top, teal at the
+bottom right, near-black in the middle so the dark UI still separates from it.
+
+Base `rgb(10, 11, 24)`, then blend each blob over it in order. Positions and
+radii are fractions of the canvas, colors are the blob's own:
+
+| x    | y    | radius | color                |
+| ---- | ---- | ------ | -------------------- |
+| 0.08 | 0.06 | 0.62   | `rgb(79, 70, 229)`   |
+| 0.92 | 0.10 | 0.55   | `rgb(124, 58, 237)`  |
+| 0.78 | 0.95 | 0.60   | `rgb(16, 132, 129)`  |
+| 0.20 | 0.98 | 0.52   | `rgb(37, 39, 96)`    |
+| 0.50 | 0.45 | 0.40   | `rgb(30, 27, 75)`    |
+
+For each pixel at fractional position `(fx, fy)` with `aspect = width / height`:
+
+```
+dx = (fx - bx) * aspect
+dy = fy - by
+d  = sqrt(dx² + dy²)
+t  = max(0, 1 - d / (radius * aspect))
+t  = t * t * (3 - 2t)                      # smoothstep
+channel += (blobChannel - channel) * t     # per channel, blobs applied in order
+```
+
+Compute it at 128px wide (height proportional), then upscale to the full canvas
+with Lanczos and apply a 2px Gaussian blur. Evaluating per-pixel at full size is
+slow and bands; the upscale is what keeps it smooth.
+
+### The window
+
+`s` is the capture's pixel ratio: 2 for a 2x Chrome capture or a terminal
+replay. Every measurement below is multiplied by it.
+
+- **Title bar**: 38 tall, fill `rgb(26, 26, 32)`, 1px bottom hairline
+  `rgb(46, 46, 54)`. Traffic lights are 12 across, centered vertically, at x =
+  20, 40, 60: `#ff5f57`, `#febc2e`, `#28c840`. No URL pill (we dropped it).
+- **Corners**: 14 radius on the whole window (bar + capture), as an alpha mask.
+- **Edge**: 1px rounded-rect outline, white at 15% alpha, so the dark window
+  separates from the dark gradient.
+- **Shadow**: rounded rect the size of the window, offset 10 down at the top and
+  22 at the bottom, black at 59% alpha, Gaussian blurred by 26. Composite it
+  under the window.
+- **Padding**: 64 of gradient on every side.
+- **Output**: downscale to 2000px wide with Lanczos and save optimized PNG.
+
+### Capturing
+
+- **Web**: Chrome DevTools MCP at a 1600x900 viewport (captures at 2x, so
+  3200x1800). Send real telemetry to a room rather than faking DB rows. To shoot
+  unreleased UI, `pnpm build` in `web/` then `wrangler dev` in `workers/`, which
+  serves `web/.output/public` and handles ingest, so the app behaves exactly as
+  deployed. Override `span-panel-width` in localStorage (500 works well) when a
+  detail panel is squeezed.
+- **CLI**: the TUI cannot be screenshotted directly. Run it on a pty
+  (`pty.fork` plus a `TIOCSWINSZ` ioctl to pin the grid, 140x27 is the size in
+  use) while writing timed keystrokes to the master fd, capture the raw ANSI,
+  then replay that stream through xterm.js in a self-contained page and
+  screenshot it in Chrome. Terminal theme is the app's zinc palette on
+  `#09090b`, 13px SF Mono at 1.2 line height, 14px padding.
+- Capture the CLI against `teley.dev`, not localhost, so the DSN in the header
+  looks real. `--local` is the exception: localhost endpoints in the header are
+  the whole point of that image.
+
+### Re-recording the CLI images with vhs
+
+`cli/vhs/` scripts the four CLI images, so they can be reshot when the TUI
+changes. [vhs](https://github.com/charmbracelet/vhs) does the pty-plus-xterm.js
+capture described above (it drives ttyd through headless Chrome), and
+`cli/vhs/frame.py` applies the gradient and window treatment above. `frame.py`
+is the executable copy of this section, so the numbers here and the constants
+there have to move together.
+
+```sh
+cd cli/vhs && ./record.sh          # all four, straight into docs/screenshots
+cd cli/vhs && ./record.sh json     # navigation | mcp | json | local
+```
+
+- `brew install vhs`, and register SF Mono first. macOS ships it inside
+  Terminal.app but hides it from other apps, so Chrome falls back to a
+  proportional serif and the grid comes out wrong:
+  `cp /System/Applications/Utilities/Terminal.app/Contents/Resources/Fonts/SF-Mono-{Regular,Bold,RegularItalic,BoldItalic}.otf ~/Library/Fonts/`
+- `common.tape` pins the grid: 2464px wide at 2x, SF Mono 26px, 28px padding
+  gives exactly 140 columns. Each tape sets `Height` to `56 + rows * 38.26`.
+- vhs cannot parse an absolute path after `Output` or `Source`, and `Screenshot`
+  needs a `Sleep` after it or the file is never written.
+- Recordings use a throwaway room id, never a real one, and GIFs are written at
+  1200px wide rather than 2000 since every frame carries the gradient.
+- `cli/vhs/README.md` has the rest.
+
 ## Architecture Notes
 
 1. **Local-first**: All telemetry stored in browser IndexedDB. No backend database.
