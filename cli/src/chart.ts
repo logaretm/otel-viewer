@@ -51,7 +51,13 @@ export class BrailleCanvas {
   // Pixel coordinates, origin top-left. Out of bounds is dropped rather than
   // clamped, so a clipped line loses the offscreen part instead of smearing it
   // along the edge.
+  //
+  // The finiteness test is not redundant with the range test: every comparison
+  // against NaN is false, so `px < 0 || px >= width` waves NaN through and the
+  // DOT_BITS lookup below then throws on an undefined row. Callers are supposed
+  // to screen their data, but a guard a NaN walks straight through is not one.
   set(x: number, y: number): void {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return;
     const px = Math.round(x);
     const py = Math.round(y);
     if (px < 0 || py < 0 || px >= this.width || py >= this.height) return;
@@ -61,7 +67,21 @@ export class BrailleCanvas {
 
   // Bresenham between consecutive samples, so a steep climb reads as one line
   // rather than a column of unconnected dots.
+  //
+  // A non-finite endpoint is refused rather than clipped, because this loop
+  // cannot terminate on one: `x === ex && y === ey` is false forever when
+  // either is NaN, and both advance tests compare against a NaN error term, so
+  // neither coordinate ever moves. That spins without allocating, which pins
+  // the event loop and leaves ctrl-c dead.
   line(x0: number, y0: number, x1: number, y1: number): void {
+    if (
+      !Number.isFinite(x0) ||
+      !Number.isFinite(y0) ||
+      !Number.isFinite(x1) ||
+      !Number.isFinite(y1)
+    ) {
+      return;
+    }
     let x = Math.round(x0);
     let y = Math.round(y0);
     const ex = Math.round(x1);
@@ -168,9 +188,12 @@ function buildYAxis(
   const ticks = new Set(tickRows(rows));
   const labels = Array.from({ length: rows }, (_, row) => {
     if (!ticks.has(row)) return '';
-    // Row 0 is the top of the plot, so it carries the maximum.
+    // Row 0 is the top of the plot, so it carries the maximum. Interpolated
+    // rather than stepped down from `max` by `(max - min) * fraction`, since
+    // that difference can overflow on a wide range and print `-Infinity` next
+    // to a plot that drew fine.
     const fraction = rows === 1 ? 0 : row / (rows - 1);
-    return formatValue(max - (max - min) * fraction);
+    return formatValue(max * (1 - fraction) + min * fraction);
   });
   const yWidth = labels.reduce((w, label) => Math.max(w, label.length), 0);
   return { y: labels.map((label) => label.padStart(yWidth)), yWidth };
@@ -259,6 +282,10 @@ export function buildLineChart(options: {
   const values = points.map((p) => p.v);
   let min = Math.min(...values);
   let max = Math.max(...values);
+  // Two finite extremes are enough to overflow the range to Infinity
+  // (1.7e308 - -1.7e308), which makes every normalised position NaN. There is
+  // no scale to draw against at that point.
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return null;
   // A flat series has no range to scale into. Pad it so the line lands in the
   // middle of the plot rather than on an edge, where it reads as clipped.
   if (max - min < Number.EPSILON) {
@@ -282,8 +309,13 @@ export function buildLineChart(options: {
       : points.length === 1
         ? 0
         : (i / (points.length - 1)) * (canvas.width - 1);
+  // Halved before subtracting. Two perfectly ordinary finite doubles can have
+  // a difference that overflows (1.7e308 - -1.7e308 is Infinity), which would
+  // make every normalised position NaN and plot nothing. Halving both sides
+  // leaves the ratio identical and keeps the arithmetic in range.
+  const half = max / 2 - min / 2;
   const py = (p: Point) =>
-    (1 - (p.v - min) / (max - min)) * (canvas.height - 1);
+    (1 - (p.v / 2 - min / 2) / half) * (canvas.height - 1);
 
   if (points.length === 1) {
     canvas.set(0, py(points[0]!));
@@ -341,6 +373,7 @@ export function buildBarChart(options: {
 
   for (let pass = 0; pass < 3; pass++) {
     max = Math.max(...bars.map((bar) => bar.value));
+    if (!Number.isFinite(max)) return null;
     axis = fitAxis(width, rows, 0, max, formatValue);
     if (!axis) return null;
     if (bars.length <= axis.cols) break;

@@ -226,6 +226,8 @@ bun install
 bun run dev              # bun run src/index.tsx
 bun run dev --demo
 bun run typecheck
+bun run test             # bun test; chart.ts and metrics.ts are pure, so they
+                         # are covered directly
 bun run build            # bundle to dist/ (what gets published)
 ```
 

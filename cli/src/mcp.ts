@@ -468,7 +468,7 @@ export function buildMcpServer(
     {
       title: 'List metrics',
       description:
-        'Lists the metric series captured in this room, one line each: type, service, current reading, and the range it moved over. A metric split by attributes is several series, listed separately. Use it to check a counter moved or a duration regressed after a run.',
+        'Lists the metric series captured in this room, one line each: type, service, latest reading, and min/max/avg over the points captured here (observation count for a histogram). A metric split by attributes, service, or source is several series, listed separately. Counters are reported as sent, and the room cannot tell a cumulative counter from a delta one, so read a rise as "this went up" rather than as a rate.',
       inputSchema: z.object({
         limit: z.number().int().positive().default(50),
         name: z

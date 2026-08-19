@@ -77,6 +77,11 @@ export function MetricDetail({
         backgroundColor: UI.bg,
         paddingLeft: 1,
         paddingRight: 1,
+        // The rows below do not shrink, so without this they render past the
+        // panel's own bottom border and onto the status bar once the terminal
+        // is short enough. Clipping bounds them to the panel; the scrollbox is
+        // what makes the clipped part reachable.
+        overflow: 'hidden',
       }}
       title={` ${truncate(series.name, Math.max(4, inner - 2))} `}
     >

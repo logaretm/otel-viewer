@@ -33,7 +33,8 @@
     "dev": "bun run src/index.tsx",
     "build": "bun build src/index.tsx --target=bun --packages=external --outdir dist --define TELEY_CLI_SENTRY_DSN=\"'$TELEY_CLI_SENTRY_DSN'\"",
     "prepublishOnly": "bun run build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.0.0",

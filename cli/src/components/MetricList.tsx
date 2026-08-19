@@ -11,9 +11,10 @@ interface Props {
   focused: boolean;
 }
 
-// Single-letter type badge: counter, gauge, histogram, set.
+// Single-letter type badge: Counter, Gauge, Histogram, Set. The four types
+// happen to start with four different letters.
 function typeBadge(type: string): string {
-  return type === 'set' ? 'S' : type[0]!.toUpperCase();
+  return type[0]!.toUpperCase();
 }
 
 export function MetricList({

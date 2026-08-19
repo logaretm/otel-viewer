@@ -172,6 +172,7 @@ credentials: key (stores roomId, receiveToken)
 ## Scripts
 
 ```bash
+pnpm test             # bun test, across every package that defines one
 pnpm dev              # Nuxt dev server
 pnpm build            # Static build (nuxt generate)
 pnpm dev:worker       # Cloudflare Worker dev

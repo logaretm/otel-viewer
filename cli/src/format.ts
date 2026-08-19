@@ -153,6 +153,7 @@ const UNIT_LABEL: Record<string, string> = {
   hour: 'h',
   day: 'd',
   week: 'w',
+  bit: 'bits',
   byte: 'bytes',
   kilobyte: 'kB',
   kibibyte: 'KiB',
@@ -160,6 +161,12 @@ const UNIT_LABEL: Record<string, string> = {
   mebibyte: 'MiB',
   gigabyte: 'GB',
   gibibyte: 'GiB',
+  terabyte: 'TB',
+  tebibyte: 'TiB',
+  petabyte: 'PB',
+  pebibyte: 'PiB',
+  exabyte: 'EB',
+  exbibyte: 'EiB',
 };
 
 // The unit to print after a value. Empty when there is nothing worth printing:

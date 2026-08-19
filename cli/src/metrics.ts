@@ -1,9 +1,11 @@
 // Grouping raw metric points into the series a chart is drawn from.
 //
 // A Metric off the wire is one data point. What a reader wants is the series it
-// belongs to, which is the name *and* the attribute set: `http.server.duration`
-// split by route is several independent lines, and folding them together by
-// name alone produces a zigzag that describes nothing.
+// belongs to, which is the name, the attribute set, *and* where it came from:
+// `http.server.duration` split by route is several independent lines, and so is
+// `process.runtime.memory.heap` reported by two services under the same name
+// with no attributes at all. Folding any of those together produces a zigzag
+// between unrelated numbers that describes nothing.
 
 import type { Bar, Point } from './chart';
 import { formatCompact } from './format';
@@ -65,6 +67,19 @@ function stableValue(value: unknown): string {
   }
 }
 
+// Everything that makes two points part of the same line. The origin trails the
+// attributes so that sorting on this still runs name-first: prefixing the
+// service would group the list by service and break the ordering the docblock
+// below promises.
+function seriesKey(metric: Metric): string {
+  return [
+    metric.name,
+    attributeKey(metric.attributes),
+    metric.service_name,
+    metric.source,
+  ].join(' ');
+}
+
 /**
  * Groups points into series, ordered by name then by attributes. Alphabetical
  * rather than newest-first on purpose: series are long-lived, and a list that
@@ -75,7 +90,7 @@ export function groupSeries(metrics: Metric[]): MetricSeries[] {
   const byKey = new Map<string, Metric[]>();
 
   for (const metric of metrics) {
-    const key = `${metric.name} ${attributeKey(metric.attributes)}`;
+    const key = seriesKey(metric);
     const bucket = byKey.get(key);
     if (bucket) bucket.push(metric);
     else byKey.set(key, [metric]);
@@ -107,8 +122,9 @@ export function groupSeries(metrics: Metric[]): MetricSeries[] {
   return addDistinguishers(series).sort((a, b) => a.key.localeCompare(b.key));
 }
 
-// Fills in `distinguisher` for series that share a name, using only the
-// attribute keys whose values actually differ between them. A key every sibling
+// Fills in `distinguisher` for series that share a name, using only the things
+// that actually differ between them: attribute values first, then the service
+// and source when those are what split the series. Anything every sibling
 // agrees on separates nothing and is left out.
 function addDistinguishers(series: MetricSeries[]): MetricSeries[] {
   const byName = new Map<string, MetricSeries[]>();
@@ -127,9 +143,15 @@ function addDistinguishers(series: MetricSeries[]): MetricSeries[] {
       const seen = new Set(siblings.map((s) => stableValue(s.attributes[key])));
       return seen.size > 1;
     });
+    const services = new Set(siblings.map((s) => s.service_name));
+    const sources = new Set(siblings.map((s) => s.source));
+
     for (const s of siblings) {
-      s.distinguisher = varying
-        .map((key) => stableValue(s.attributes[key]))
+      s.distinguisher = [
+        ...varying.map((key) => stableValue(s.attributes[key])),
+        services.size > 1 ? s.service_name : '',
+        sources.size > 1 ? s.source : '',
+      ]
         .filter(Boolean)
         .join(' ');
     }
@@ -149,11 +171,23 @@ export function seriesLabel(series: MetricSeries): string {
 // A point's plottable value. Usually `value`, but a bucketless histogram (a
 // Sentry distribution) carries its observation in the snapshot instead, where
 // sum over count is that single measurement.
+//
+// This is the screen for non-finite values, and it has to be here rather than
+// left to the chart: nothing between the wire and here rejects them. OTLP's
+// `asDouble ?? Number(asInt ?? 0)` only skips null, so a NaN gauge (the
+// `hits / total` bug with no hits) or an Infinity arrives intact, and a chart
+// cannot plot a point that has no position.
 function pointOf(metric: Metric): Point | null {
-  if (metric.value !== null) return { t: metric.timestamp, v: metric.value };
+  const value = plottable(metric);
+  if (value === null || !Number.isFinite(value)) return null;
+  return { t: metric.timestamp, v: value };
+}
+
+function plottable(metric: Metric): number | null {
+  if (metric.value !== null) return metric.value;
   const histogram = metric.histogram;
   if (histogram && histogram.buckets.length === 0 && histogram.count > 0) {
-    return { t: metric.timestamp, v: histogram.sum / histogram.count };
+    return histogram.sum / histogram.count;
   }
   return null;
 }
@@ -181,7 +215,10 @@ export function seriesStats(series: MetricSeries): SeriesStats {
 export function histogramBars(histogram: HistogramData): Bar[] {
   return histogram.buckets.map((bucket) => ({
     label: Number.isFinite(bucket.bound) ? formatCompact(bucket.bound) : '+∞',
-    value: bucket.count,
+    // Counts come from `Number(bucketCounts[i] ?? 0)`, which yields NaN for a
+    // non-numeric count. A bucket with no readable count has a height of none,
+    // which is what an unobserved bucket looks like anyway.
+    value: Number.isFinite(bucket.count) ? bucket.count : 0,
   }));
 }
 
@@ -192,10 +229,12 @@ export function histogramBars(histogram: HistogramData): Bar[] {
 export function currentValue(series: MetricSeries): number | null {
   if (series.buckets) {
     const histogram = series.latest.histogram!;
-    return histogram.count === 0 ? null : histogram.sum / histogram.count;
+    const mean = histogram.count === 0 ? null : histogram.sum / histogram.count;
+    return mean !== null && Number.isFinite(mean) ? mean : null;
   }
   if (series.type === 'set' && series.latest.value === null) {
     return series.latest.set_values?.length ?? null;
   }
+  // Already screened for finiteness on the way into `points`.
   return series.points.at(-1)?.v ?? null;
 }
