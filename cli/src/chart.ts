@@ -2,14 +2,18 @@
 // this, so both renderers below produce plain rows of text that a component
 // prints like any other line.
 //
-// Two renderers, each matched to a data shape. A time series draws as a braille
-// line, because a braille cell carries 2x4 dots and so an 8-row panel plots at
-// 32 rows of vertical resolution. Histogram buckets draw as block columns
-// instead: a bar's height is the whole reading, and subcell smoothing would
-// only blur where one bucket ends and the next begins.
+// Two renderers, one texture. A braille cell carries 2x4 dots, so an 8-row
+// panel plots at 32 rows of vertical resolution and every column can be
+// addressed at half-cell precision. A time series draws as a line through those
+// dots; histogram buckets draw as filled rectangles of them. Bars could use the
+// eighth-block ramp instead, which would double their vertical resolution, but
+// then the two charts would not look like they came from the same program, and
+// a bar's height is read against the axis rather than to within an eighth of a
+// row.
 //
 // Both take the panel's full width and lay out their own y-axis column, since
-// how wide the labels are is only known once the scale is.
+// how wide the labels are is only known once the scale is. When the panel is
+// too narrow to carry both, the scale is what gives.
 
 // Braille cells are U+2800 plus a bitmask over the 8 dots, whose bit order is
 // historical rather than raster order: the first three rows fill column-major
@@ -83,6 +87,15 @@ export class BrailleCanvas {
     }
   }
 
+  // Fills a pixel rectangle. Bars are drawn with this rather than with block
+  // characters so both charts share one texture, and so a bar can be an odd
+  // number of dots wide.
+  fillRect(x: number, y: number, w: number, h: number): void {
+    for (let dy = 0; dy < h; dy++) {
+      for (let dx = 0; dx < w; dx++) this.set(x + dx, y + dy);
+    }
+  }
+
   toRows(): string[] {
     const out: string[] = [];
     for (let row = 0; row < this.rows; row++) {
@@ -98,10 +111,6 @@ export class BrailleCanvas {
   }
 }
 
-// Eighth-block heights, indexed by how many eighths of a cell are filled.
-const BLOCKS = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'] as const;
-const EIGHTHS = 8;
-
 // Below this there is no room for a plot worth drawing.
 const MIN_COLS = 8;
 const MIN_ROWS = 2;
@@ -115,6 +124,9 @@ export interface Axis {
   x: string;
   // Width of the y column, so the caller can indent the axis rule to match.
   yWidth: number;
+  // False when the panel was too narrow to carry a scale and the plot took the
+  // whole width instead. The caller draws no gutter column in that case.
+  gutter: boolean;
 }
 
 export interface Chart {
@@ -162,6 +174,31 @@ function buildYAxis(
   });
   const yWidth = labels.reduce((w, label) => Math.max(w, label.length), 0);
   return { y: labels.map((label) => label.padStart(yWidth)), yWidth };
+}
+
+// Fits the y scale into the panel, giving up the scale rather than the plot
+// when there is not room for both: a plot with no labels still shows shape,
+// which beats refusing to draw and telling the reader to resize the terminal.
+// Returns null only when even a bare plot will not fit.
+function fitAxis(
+  width: number,
+  rows: number,
+  min: number,
+  max: number,
+  formatValue: (v: number) => string,
+): { y: string[]; yWidth: number; gutter: boolean; cols: number } | null {
+  const scale = buildYAxis(rows, min, max, formatValue);
+  const cols = width - scale.yWidth - 1; // -1 for the gutter
+  if (cols >= MIN_COLS) return { ...scale, gutter: true, cols };
+  if (width >= MIN_COLS) {
+    return {
+      y: Array.from({ length: rows }, () => ''),
+      yWidth: 0,
+      gutter: false,
+      cols: width,
+    };
+  }
+  return null;
 }
 
 // Writes labels into a fixed-width row at fractional positions. A label is
@@ -230,9 +267,9 @@ export function buildLineChart(options: {
     max += pad;
   }
 
-  const { y, yWidth } = buildYAxis(rows, min, max, formatValue);
-  const cols = width - yWidth - 1; // -1 for the axis gutter
-  if (cols < MIN_COLS) return null;
+  const axis = fitAxis(width, rows, min, max, formatValue);
+  if (!axis) return null;
+  const { y, yWidth, gutter, cols } = axis;
 
   const canvas = new BrailleCanvas(cols, rows);
   const tMin = points[0]!.t;
@@ -272,14 +309,16 @@ export function buildLineChart(options: {
   return {
     plot: canvas.toRows(),
     plotWidth: cols,
-    axis: { y, x, yWidth },
+    axis: { y, x, yWidth, gutter },
     min,
     max,
   };
 }
 
 /**
- * Histogram buckets as block columns. Buckets that cannot each hold a column
+ * Histogram buckets as bars, filled into the same braille grid the line uses.
+ * Bars are laid out in dots rather than cells, so twice as many buckets fit
+ * before any have to be merged; buckets that still cannot each hold a column
  * are merged with their neighbours (counts summed, the group keeping the first
  * bound's label), so a narrow panel shows a coarser histogram rather than a
  * truncated one.
@@ -298,50 +337,41 @@ export function buildBarChart(options: {
   // measurement settles immediately; the bound is a backstop, not a schedule.
   let bars = options.bars;
   let max = 0;
-  let axisY: { y: string[]; yWidth: number } | null = null;
-  let cols = 0;
+  let axis: ReturnType<typeof fitAxis> = null;
 
   for (let pass = 0; pass < 3; pass++) {
     max = Math.max(...bars.map((bar) => bar.value));
-    axisY = buildYAxis(rows, 0, max, formatValue);
-    cols = width - axisY.yWidth - 1;
-    if (cols < MIN_COLS) return null;
-    if (bars.length <= cols) break;
-    bars = mergeBars(bars, cols);
+    axis = fitAxis(width, rows, 0, max, formatValue);
+    if (!axis) return null;
+    if (bars.length <= axis.cols) break;
+    bars = mergeBars(bars, axis.cols);
   }
 
   // Every bucket is empty: there is no scale to draw, and an empty plot says so
   // more honestly than a row of full-height bars would.
-  if (max <= 0 || !axisY) return null;
+  if (max <= 0 || !axis) return null;
 
-  const slot = Math.max(1, Math.floor(cols / bars.length));
-  const fill = slot > 1 ? slot - 1 : 1;
+  const { y, yWidth, gutter, cols } = axis;
+  const canvas = new BrailleCanvas(cols, rows);
 
-  // Height in eighths of a cell. A non-empty bucket is floored at one eighth,
-  // so a bucket with a single sample stays visible next to a tall neighbour.
-  const heights = bars.map((bar) =>
-    bar.value <= 0
-      ? 0
-      : Math.max(1, Math.round((bar.value / max) * rows * EIGHTHS)),
-  );
+  // Bars are laid out in dots rather than cells, so a bar can be an odd number
+  // of dots wide and twice as many buckets fit before any have to be merged.
+  const slot = Math.max(2, Math.floor(canvas.width / bars.length));
+  const fill = slot > 2 ? slot - 1 : slot;
 
-  const plot = Array.from({ length: rows }, (_, row) => {
-    // Cells below this row are full, so subtract them to get what is left over
-    // for this one.
-    const below = (rows - 1 - row) * EIGHTHS;
-    let line = '';
-    for (const height of heights) {
-      const eighths = Math.max(0, Math.min(EIGHTHS, height - below));
-      line += BLOCKS[eighths]!.repeat(fill) + ' '.repeat(slot - fill);
-    }
-    return line.slice(0, cols).padEnd(cols);
-  });
+  for (const [i, bar] of bars.entries()) {
+    if (bar.value <= 0) continue;
+    // Floored at one dot, so a bucket with a single sample stays visible next
+    // to a tall neighbour instead of rounding away to nothing.
+    const height = Math.max(1, Math.round((bar.value / max) * canvas.height));
+    canvas.fillRect(i * slot, canvas.height - height, fill, height);
+  }
 
   // Centred on the bar itself, not on its left edge, so a label sits over the
-  // column it names.
+  // column it names. Dot positions halve into cell positions.
   const x = placeLabels(
     bars.map((bar, i) => ({
-      at: (i * slot + (fill - 1) / 2) / Math.max(1, cols - 1),
+      at: (i * slot + (fill - 1) / 2) / 2 / Math.max(1, cols - 1),
       text: bar.label,
     })),
     cols,
@@ -349,9 +379,9 @@ export function buildBarChart(options: {
   );
 
   return {
-    plot,
+    plot: canvas.toRows(),
     plotWidth: cols,
-    axis: { y: axisY.y, x, yWidth: axisY.yWidth },
+    axis: { y, x, yWidth, gutter },
     min: 0,
     max,
   };

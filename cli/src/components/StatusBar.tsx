@@ -22,8 +22,19 @@ export function StatusBar({
   focus: Focus;
   canScroll: boolean;
 }) {
+  // One row, clipped rather than wrapped: the body height is computed assuming
+  // this is STATUS_H tall, so a narrow terminal that wrapped the hints would
+  // push the panels up and cut off their top border.
   return (
-    <box style={{ flexDirection: 'row', paddingLeft: 1 }}>
+    <box
+      style={{
+        flexDirection: 'row',
+        paddingLeft: 1,
+        height: 1,
+        flexShrink: 0,
+        overflow: 'hidden',
+      }}
+    >
       {focus === 'links' ? (
         <>
           <Key k="↑↓" label="select link" />

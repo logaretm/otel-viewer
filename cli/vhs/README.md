@@ -15,7 +15,7 @@ inspection and are gitignored.
 | ------------------------ | --------------------------------- | ------------------------------------------------- |
 | `navigation.tape`        | `teley-cli-navigation.gif`        | Every key in the readme's key table, in order     |
 | `metrics.tape`           | `teley-cli-metrics.png`           | A gauge as a braille line, split into two series  |
-| `metrics-histogram.tape` | `teley-cli-metrics-histogram.png` | A histogram's buckets as block columns            |
+| `metrics-histogram.tape` | `teley-cli-metrics-histogram.png` | A histogram's buckets as braille bars             |
 | `mcp.tape`               | `teley-cli-mcp.gif`               | The MCP loop against a real `teley mcp --local`   |
 | `json.tape`              | `teley-cli-json.png`              | `--json` piped through `jq`                       |
 | `local.tape`             | `teley-cli-local.png`             | `--local`, with localhost endpoints in the header |

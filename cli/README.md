@@ -72,7 +72,7 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 - **Live waterfall.** Time-proportional span bars with the real hierarchy, span-kind badges, and errors in red.
 - **Span details.** Kind, duration, status, span id, and every attribute for the selected span.
 - **Logs view.** The full log stream with severity colors, correlated with the traces in the same room.
-- **Metric charts.** Counters and gauges plot as braille line charts, histograms as block columns, both drawn in the terminal itself. A metric split by attributes is charted as one series per attribute set, not folded into an average.
+- **Metric charts.** Drawn in the terminal itself, out of braille: counters and gauges as lines, histogram buckets as bars. A metric split by attributes is charted as one series per attribute set, not folded into an average.
 - **Both protocols.** OTLP and Sentry envelopes render in one timeline, each tagged with its source.
 - **Sessions that persist.** Your room is reused across runs, so a restart does not invalidate the DSN you configured.
 - **Pipeable.** `--json` drops the TUI and streams the room as newline-delimited JSON, for `jq`, a file, or CI.
@@ -95,8 +95,8 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 </p>
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-metrics-histogram.png" alt="A histogram's buckets as block columns, with the stats panel open" width="100%">
-  <br><em>Histogram buckets get block columns instead, labelled with their upper bounds. <code>tab</code> swaps the series list for the snapshot's own summary.</em>
+  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-metrics-histogram.png" alt="A histogram's buckets as braille bars, with the stats panel open" width="100%">
+  <br><em>Histogram buckets are bars in the same braille grid, labelled with their upper bounds. <code>tab</code> swaps the series list for the snapshot's own summary.</em>
 </p>
 
 ## ⌨️ Keys

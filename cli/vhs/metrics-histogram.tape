@@ -2,8 +2,8 @@ Output raw/metrics-histogram.png
 Source common.tape
 Set Height 1089
 
-# 140x27. The other renderer: a histogram's buckets as block columns, with tab
-# held on the detail panel so the snapshot's own summary is beside the bars.
+# 140x27. The other renderer: a histogram's buckets as bars in the same braille
+# grid, with tab held on the detail panel so the summary is beside them.
 
 Hide
 Type "export HOME=$PWD/.home && cd .. && clear"
