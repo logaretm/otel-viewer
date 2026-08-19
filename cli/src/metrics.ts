@@ -25,6 +25,11 @@ export interface MetricSeries {
   distinguisher: string;
   // Ascending by time, so a chart can walk them in order.
   points: Point[];
+  // The latest snapshot's buckets, or null when there is no bucketed shape to
+  // draw. OTLP histograms carry explicit bounds; a Sentry distribution does
+  // not, and arrives as one observation per point instead, so it is a series
+  // over time rather than a distribution over buckets.
+  buckets: Bar[] | null;
   // Newest point, which is what carries the current histogram or set contents.
   latest: Metric;
 }
@@ -90,9 +95,11 @@ export function groupSeries(metrics: Metric[]): MetricSeries[] {
       source: latest.source,
       attributes: latest.attributes,
       distinguisher: '',
-      points: ordered
-        .filter((m) => m.value !== null)
-        .map((m) => ({ t: m.timestamp, v: m.value! })),
+      points: ordered.map(pointOf).filter((p): p is Point => p !== null),
+      buckets:
+        latest.histogram && latest.histogram.buckets.length > 0
+          ? histogramBars(latest.histogram)
+          : null,
       latest,
     });
   }
@@ -139,6 +146,18 @@ export function seriesLabel(series: MetricSeries): string {
   return keys.map((k) => `${k}=${stableValue(series.attributes[k])}`).join(' ');
 }
 
+// A point's plottable value. Usually `value`, but a bucketless histogram (a
+// Sentry distribution) carries its observation in the snapshot instead, where
+// sum over count is that single measurement.
+function pointOf(metric: Metric): Point | null {
+  if (metric.value !== null) return { t: metric.timestamp, v: metric.value };
+  const histogram = metric.histogram;
+  if (histogram && histogram.buckets.length === 0 && histogram.count > 0) {
+    return { t: metric.timestamp, v: histogram.sum / histogram.count };
+  }
+  return null;
+}
+
 export function seriesStats(series: MetricSeries): SeriesStats {
   const values = series.points.map((p) => p.v);
   if (values.length === 0) {
@@ -166,18 +185,17 @@ export function histogramBars(histogram: HistogramData): Bar[] {
   }));
 }
 
-// What to show as the series' current reading. A histogram has no single
-// value, so it reports the mean of its latest snapshot: that is the one number
-// in the metric's own unit, where the observation count is not (a `ms`
+// What to show as the series' current reading. A bucketed histogram has no
+// single value, so it reports the mean of its latest snapshot: that is the one
+// number in the metric's own unit, where the observation count is not (a `ms`
 // histogram counting 360 observations has not observed 360ms of anything).
 export function currentValue(series: MetricSeries): number | null {
-  if (series.type === 'histogram') {
-    const histogram = series.latest.histogram;
-    if (!histogram || histogram.count === 0) return null;
-    return histogram.sum / histogram.count;
+  if (series.buckets) {
+    const histogram = series.latest.histogram!;
+    return histogram.count === 0 ? null : histogram.sum / histogram.count;
   }
-  if (series.type === 'set') {
-    return series.latest.value ?? series.latest.set_values?.length ?? null;
+  if (series.type === 'set' && series.latest.value === null) {
+    return series.latest.set_values?.length ?? null;
   }
-  return series.latest.value;
+  return series.points.at(-1)?.v ?? null;
 }

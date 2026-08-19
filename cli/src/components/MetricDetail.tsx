@@ -50,7 +50,10 @@ export function MetricDetail({
 }: Props) {
   const inner = width - 4; // border + padding
   const stats = seriesStats(series);
-  const histogram = series.latest.histogram;
+  // Only a bucketed snapshot has a summary worth reporting on its own. A
+  // bucketless one describes a single observation, so the series' own stats
+  // over every observation say more.
+  const histogram = series.buckets ? series.latest.histogram : null;
   const unit = unitLabel(series.unit);
   const suffix = unit ? ` ${unit}` : '';
   const attrs = Object.entries(series.attributes ?? {});

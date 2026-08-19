@@ -123,9 +123,11 @@ function trimZeros(value: number): string {
   return Number(value.toFixed(1)).toString();
 }
 
-// OTLP carries units as UCUM, where a few codes are not what a reader expects.
-// Anything not listed passes through, since most are already the symbol.
+// OTLP carries units as UCUM, where a few codes are not what a reader expects,
+// and Sentry spells the same dimensions out in full. Both are mapped to the
+// symbol a chart has room for. Anything unlisted passes through.
 const UNIT_LABEL: Record<string, string> = {
+  // UCUM, as OTLP sends it.
   '1': '',
   '%': '%',
   By: 'bytes',
@@ -138,6 +140,26 @@ const UNIT_LABEL: Record<string, string> = {
   s: 's',
   min: 'min',
   h: 'h',
+  // Sentry's spelled-out units. `none` and `ratio` are dimensionless, so they
+  // print as nothing rather than as a word beside every value.
+  none: '',
+  ratio: '',
+  percent: '%',
+  nanosecond: 'ns',
+  microsecond: 'µs',
+  millisecond: 'ms',
+  second: 's',
+  minute: 'min',
+  hour: 'h',
+  day: 'd',
+  week: 'w',
+  byte: 'bytes',
+  kilobyte: 'kB',
+  kibibyte: 'KiB',
+  megabyte: 'MB',
+  mebibyte: 'MiB',
+  gigabyte: 'GB',
+  gibibyte: 'GiB',
 };
 
 // The unit to print after a value. Empty when there is nothing worth printing:

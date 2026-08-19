@@ -1,10 +1,5 @@
 import { buildBarChart, buildLineChart, type Chart } from '../chart';
-import {
-  currentValue,
-  histogramBars,
-  seriesLabel,
-  type MetricSeries,
-} from '../metrics';
+import { currentValue, seriesLabel, type MetricSeries } from '../metrics';
 import { UI, BOLD, CHART_LINE, metricTypeColor } from '../theme';
 import { formatCompact, formatLogTime, truncate, unitLabel } from '../format';
 
@@ -25,16 +20,15 @@ export function MetricChart({ series, width, height, focused }: Props) {
   const value = currentValue(series);
   const attrs = seriesLabel(series);
 
-  // A histogram's chart is its latest bucket snapshot, not a line: the point
-  // stream carries no single value to plot. Everything else is a time series.
-  const histogram =
-    series.type === 'histogram' ? series.latest.histogram : null;
+  // A bucketed histogram charts its latest snapshot, since the shape being read
+  // is the distribution. A bucketless one (a Sentry distribution) is a stream of
+  // individual observations, so it charts over time like anything else.
   const chart: Chart | null =
     rows === 0
       ? null
-      : histogram
+      : series.buckets
         ? buildBarChart({
-            bars: histogramBars(histogram),
+            bars: series.buckets,
             width: inner,
             rows,
             formatValue: formatCompact,
@@ -53,8 +47,8 @@ export function MetricChart({ series, width, height, focused }: Props) {
   // Everything after the type, which is drawn separately in its own color.
   const meta = [
     series.service_name,
-    histogram
-      ? `${histogram.count} obs`
+    series.buckets
+      ? `${series.latest.histogram?.count ?? 0} obs`
       : `${series.points.length} point${series.points.length === 1 ? '' : 's'}`,
     attrs,
   ]
@@ -127,7 +121,7 @@ export function MetricChart({ series, width, height, focused }: Props) {
           }}
         >
           <text fg={UI.dim}>
-            {series.points.length === 0 && !histogram
+            {series.points.length === 0 && !series.buckets
               ? 'No values recorded for this series yet.'
               : 'Not enough room to plot. Widen the terminal.'}
           </text>
