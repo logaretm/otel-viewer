@@ -50,3 +50,19 @@ export function depthColor(depth: number, statusCode: number): string {
   if (statusCode === STATUS_ERROR) return ERROR_RED;
   return DEPTH_COLORS[depth % DEPTH_COLORS.length]!;
 }
+
+// Metric type colors, matching the badges the web app's MetricCard uses.
+export const METRIC_TYPE_COLORS: Record<string, string> = {
+  counter: '#22c55e', // green-500
+  gauge: '#3b82f6', // blue-500
+  histogram: '#f59e0b', // amber-500
+  set: '#a855f7', // purple-500
+};
+
+export function metricTypeColor(type: string): string {
+  return METRIC_TYPE_COLORS[type] ?? UI.dim;
+}
+
+// The plotted line and bars. One color: a chart shows one series at a time, so
+// coloring by anything else would be decoration rather than information.
+export const CHART_LINE = '#3b82f6';

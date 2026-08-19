@@ -1,22 +1,24 @@
 # Recording the CLI screenshots
 
-The four CLI images in `docs/screenshots/` are generated from this directory, so
-they can be reshot when the TUI changes instead of being redrawn by hand.
+The CLI images in `docs/screenshots/` are generated from this directory, so they
+can be reshot when the TUI changes instead of being redrawn by hand.
 
 ```sh
-./record.sh              # all four
-./record.sh navigation   # just one: navigation | mcp | json | local
+./record.sh              # all of them
+./record.sh navigation   # just one, by tape name
 ```
 
 Output goes straight to `docs/screenshots/`. Raw captures are kept in `raw/` for
 inspection and are gitignored.
 
-| Tape              | Produces                   | Shows                                             |
-| ----------------- | -------------------------- | ------------------------------------------------- |
-| `navigation.tape` | `teley-cli-navigation.gif` | Every key in the readme's key table, in order     |
-| `mcp.tape`        | `teley-cli-mcp.gif`        | The MCP loop against a real `teley mcp --local`   |
-| `json.tape`       | `teley-cli-json.png`       | `--json` piped through `jq`                       |
-| `local.tape`      | `teley-cli-local.png`      | `--local`, with localhost endpoints in the header |
+| Tape                     | Produces                          | Shows                                             |
+| ------------------------ | --------------------------------- | ------------------------------------------------- |
+| `navigation.tape`        | `teley-cli-navigation.gif`        | Every key in the readme's key table, in order     |
+| `metrics.tape`           | `teley-cli-metrics.png`           | A gauge as a braille line, split into two series  |
+| `metrics-histogram.tape` | `teley-cli-metrics-histogram.png` | A histogram's buckets as block columns            |
+| `mcp.tape`               | `teley-cli-mcp.gif`               | The MCP loop against a real `teley mcp --local`   |
+| `json.tape`              | `teley-cli-json.png`              | `--json` piped through `jq`                       |
+| `local.tape`             | `teley-cli-local.png`             | `--local`, with localhost endpoints in the header |
 
 ## Prerequisites
 

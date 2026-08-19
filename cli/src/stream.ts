@@ -6,7 +6,7 @@ import { TraceStore } from './relay';
 import type { Endpoints, Session } from './session';
 import type { TelemetrySource } from './source';
 import { flush } from './observability';
-import type { Log, Span, Trace } from './types';
+import type { Log, Metric, Span, Trace } from './types';
 
 // A trace can appear on several lines as its spans stream in: `trace` is the
 // running summary over every span seen so far, `spans` are only the ones that
@@ -21,7 +21,8 @@ type StreamEventBody =
       otlp: string;
     }
   | { type: 'trace'; trace: Trace; spans: Span[] }
-  | { type: 'log'; log: Log };
+  | { type: 'log'; log: Log }
+  | { type: 'metric'; metric: Metric };
 
 export type StreamEvent = StreamEventBody & { time: string };
 
@@ -62,10 +63,12 @@ export async function runStream({
   // inspected without wiring up an SDK. Loaded on demand, so a live run never
   // pays for the sample data.
   if (demo) {
-    const { MOCK_TRACES, buildMockLogs } = await import('./mock-data');
+    const { MOCK_TRACES, buildMockLogs, buildMockMetrics } =
+      await import('./mock-data');
     for (const { trace, spans } of MOCK_TRACES)
       emit({ type: 'trace', trace, spans });
     for (const log of buildMockLogs()) emit({ type: 'log', log });
+    for (const metric of buildMockMetrics()) emit({ type: 'metric', metric });
     process.exit(0);
   }
 
@@ -83,6 +86,7 @@ export async function runStream({
     onTrace: (trace, spans) =>
       emit({ type: 'trace', trace: traces.upsert(trace, spans), spans }),
     onLog: (log) => emit({ type: 'log', log }),
+    onMetric: (metric) => emit({ type: 'metric', metric }),
     // A clear resets the merge state (so later spans do not fold into a dropped
     // trace) but emits nothing: what already went to stdout cannot be unsent.
     onClear: () => traces.clear(),

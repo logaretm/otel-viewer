@@ -5,7 +5,7 @@
 <h1 align="center">teley-cli</h1>
 
 <p align="center">
-  A live trace and log viewer for you and your agents, in your terminal. Point any OpenTelemetry or Sentry SDK at the DSN it prints.
+  A live trace, log, and metric viewer for you and your agents, in your terminal. Point any OpenTelemetry or Sentry SDK at the DSN it prints.
 </p>
 
 <p align="center">
@@ -31,7 +31,7 @@
 
 ---
 
-`teley-cli` generates a DSN and renders traces and logs as they stream in. No account, no config file.
+`teley-cli` generates a DSN and renders traces, logs, and metrics as they stream in. No account, no config file.
 
 Built with [OpenTUI](https://opentui.com) (React bindings), so the waterfall needs FFI: **Bun**, or Node 26.4+ with `--experimental-ffi`.
 
@@ -72,6 +72,7 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 - **Live waterfall.** Time-proportional span bars with the real hierarchy, span-kind badges, and errors in red.
 - **Span details.** Kind, duration, status, span id, and every attribute for the selected span.
 - **Logs view.** The full log stream with severity colors, correlated with the traces in the same room.
+- **Metric charts.** Counters and gauges plot as braille line charts, histograms as block columns, both drawn in the terminal itself. A metric split by attributes is charted as one series per attribute set, not folded into an average.
 - **Both protocols.** OTLP and Sentry envelopes render in one timeline, each tagged with its source.
 - **Sessions that persist.** Your room is reused across runs, so a restart does not invalidate the DSN you configured.
 - **Pipeable.** `--json` drops the TUI and streams the room as newline-delimited JSON, for `jq`, a file, or CI.
@@ -85,26 +86,36 @@ Traces, logs, and metrics all go to that one OTLP endpoint, in JSON or protobuf,
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-logs.png" alt="Log stream with an entry selected" width="100%">
-  <br><em><code>←</code>/<code>→</code> switches between traces and logs. Selecting an entry shows its body and attributes.</em>
+  <br><em>Selecting an entry shows its body and attributes.</em>
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-metrics.png" alt="A gauge charted as a braille line, beside the list of metric series" width="100%">
+  <br><em>Counters and gauges plot as braille lines, at 2x4 dots per cell. The same metric split by attributes is one series per attribute set, labelled with just the values that differ: here <code>primary</code> and <code>replica</code>.</em>
+</p>
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-metrics-histogram.png" alt="A histogram's buckets as block columns, with the stats panel open" width="100%">
+  <br><em>Histogram buckets get block columns instead, labelled with their upper bounds. <code>tab</code> swaps the series list for the snapshot's own summary.</em>
 </p>
 
 ## ⌨️ Keys
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-navigation.gif" alt="Walking the trace list, the waterfall, the header links, and the log stream with the keyboard" width="100%">
-  <br><em>Walking the trace list, then <code>tab</code> into the waterfall (the list collapses, the span panel appears), <code>tab</code> again to copy an endpoint, then <code>→</code> into the logs.</em>
+  <img src="https://raw.githubusercontent.com/logaretm/teley/main/docs/screenshots/teley-cli-navigation.gif" alt="Walking the trace list, the waterfall, the header links, the log stream, and the metric charts with the keyboard" width="100%">
+  <br><em>Walking the trace list, then <code>tab</code> into the waterfall (the list collapses, the span panel appears), <code>tab</code> again to copy an endpoint, then <code>→</code> through the logs and into the metrics, where <code>→</code> once more wraps back to the traces.</em>
 </p>
 
 | Key                      | Action                                        |
 | ------------------------ | --------------------------------------------- |
-| `←` / `→`                | Switch between the Traces and Logs views      |
+| `←` / `→`                | Cycle the Traces, Logs, and Metrics views     |
 | `↑` / `↓` (or `j` / `k`) | Navigate the focused panel                    |
 | `tab`                    | Cycle focus: list → detail → connection links |
 | `↵` / `y`                | Copy the focused DSN or OTLP endpoint         |
 | `c`                      | Clear the local view                          |
 | `q`                      | Quit                                          |
 
-With the trace list focused, `↑`/`↓` moves between traces. With the waterfall focused, it moves between spans and the attribute panel follows along.
+With the trace list focused, `↑`/`↓` moves between traces. With the waterfall focused, it moves between spans and the attribute panel follows along. In the metrics view `↑`/`↓` always moves between series, since a chart has nothing to walk inside one, and `tab` swaps the series list for a stats and attributes panel.
 
 ## 🧾 JSON output
 
@@ -127,9 +138,10 @@ The first line is the session, so a script can read the DSN it should point an S
 { "type": "session", "version": "0.1.7", "room_id": "…", "host": "teley.dev", "dsn": "…", "otlp": "…", "time": "…" }
 { "type": "trace", "trace": { … }, "spans": [ … ], "time": "…" }
 { "type": "log", "log": { … }, "time": "…" }
+{ "type": "metric", "metric": { … }, "time": "…" }
 ```
 
-`trace` and `log` carry the same shapes the web app uses (`shared/parsers/types.ts`). A trace appears on a new line every time more of it arrives: `trace` is the running summary over every span seen so far, while `spans` holds only the spans from that update, so lines never repeat a span.
+`trace`, `log`, and `metric` carry the same shapes the web app uses (`shared/parsers/types.ts`). A `metric` line is one data point, so a series arrives as many lines; group them by name and attributes to reassemble it. A trace appears on a new line every time more of it arrives: `trace` is the running summary over every span seen so far, while `spans` holds only the spans from that update, so lines never repeat a span.
 
 Nothing else is written to stdout. Connection state stays out of the stream, and a fatal error (a room already claimed by another token) goes to stderr with exit code 1. `ctrl-c` exits 0.
 
@@ -175,6 +187,7 @@ claude mcp add teley -- bunx teley-cli mcp
 | `list_traces`     | Captured traces, newest first (`limit`, `errors_only`, `service`)                |
 | `get_trace`       | One trace as an indented span tree (`include_attributes` for the metadata)       |
 | `list_logs`       | Captured logs (`min_severity`, `trace_id`)                                       |
+| `list_metrics`    | Captured metric series with their current reading and range (`name`, `service`)  |
 | `clear_captured`  | Drops what the server is holding, so the next run starts clean                   |
 
 The loop is: `get_dsn` → point the SDK at it → run the app → `wait_for_traces` → `get_trace` on whatever looks wrong. Results come back as text sized for a model to read, not raw payloads:

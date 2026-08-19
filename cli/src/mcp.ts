@@ -15,13 +15,21 @@ import { createRoom, type Room } from './room';
 import type { TelemetrySource } from './source';
 import { buildSpanTree } from './span-tree';
 import {
+  formatCompact,
   formatDuration,
   formatLogTime,
   severityLabel,
   spanKindLabel,
   stringifyValue,
+  unitLabel,
 } from './format';
 import type { Endpoints, Session } from './session';
+import {
+  currentValue,
+  groupSeries,
+  seriesStats,
+  type MetricSeries,
+} from './metrics';
 import type { Log, TraceEntry } from './types';
 import {
   captureException,
@@ -193,6 +201,36 @@ function relayProblem(room: Room): string | null {
   return null;
 }
 
+// One line per metric series: what it is, where it came from, and its current
+// reading. A model picking a series to look at needs no more than this.
+function seriesLine(series: MetricSeries): string {
+  const stats = seriesStats(series);
+  const value = currentValue(series);
+  const unit = unitLabel(series.unit);
+  const reading =
+    value === null ? '-' : `${formatCompact(value)}${unit ? ` ${unit}` : ''}`;
+  const spread =
+    series.type === 'histogram'
+      ? `${series.latest.histogram?.count ?? 0} obs`
+      : `min ${formatCompact(stats.min)} max ${formatCompact(stats.max)} avg ${formatCompact(stats.avg)} over ${stats.count} points`;
+
+  return [
+    series.name,
+    series.type,
+    series.service_name,
+    reading,
+    spread,
+    series.distinguisher || '',
+  ]
+    .filter(Boolean)
+    .join('  ');
+}
+
+function seriesList(series: MetricSeries[], empty: string): string {
+  if (series.length === 0) return empty;
+  return series.map(seriesLine).join('\n');
+}
+
 export function buildMcpServer(
   room: Room,
   endpoints: Endpoints,
@@ -286,12 +324,18 @@ export function buildMcpServer(
 
         if (result.traces.length === 0) setOutcome('empty');
 
-        const summary = `${result.traces.length} trace(s), ${result.logs.length} log(s)${
+        const summary = `${result.traces.length} trace(s), ${result.logs.length} log(s), ${result.metrics.length} metric point(s)${
           result.timedOut ? ' (timed out, the room was still busy)' : ''
         }`;
+        // Traces are what this tool waits for, so say where the rest went
+        // rather than reporting an empty result over telemetry that did arrive.
+        const alsoCame = [
+          result.logs.length > 0 ? 'logs (see list_logs)' : '',
+          result.metrics.length > 0 ? 'metrics (see list_metrics)' : '',
+        ].filter(Boolean);
         const empty =
-          result.logs.length > 0
-            ? 'No traces arrived, only logs. See list_logs.'
+          alsoCame.length > 0
+            ? `No traces arrived, only ${alsoCame.join(' and ')}.`
             : 'Nothing arrived while waiting.';
         return text([summary, '', traceList(result.traces, empty)].join('\n'));
       }),
@@ -420,17 +464,61 @@ export function buildMcpServer(
   );
 
   server.registerTool(
+    'list_metrics',
+    {
+      title: 'List metrics',
+      description:
+        'Lists the metric series captured in this room, one line each: type, service, current reading, and the range it moved over. A metric split by attributes is several series, listed separately. Use it to check a counter moved or a duration regressed after a run.',
+      inputSchema: z.object({
+        limit: z.number().int().positive().default(50),
+        name: z
+          .string()
+          .optional()
+          .describe('Only series whose metric name contains this substring.'),
+        service: z
+          .string()
+          .optional()
+          .describe('Only series from this service name.'),
+      }),
+      annotations: { readOnlyHint: true },
+    },
+    async ({ limit, name, service }) =>
+      measure('list_metrics', async (setOutcome) => {
+        const problem = relayProblem(room);
+        if (problem) {
+          setOutcome('disconnected');
+          return text(problem);
+        }
+
+        const all = groupSeries(room.metrics());
+        const needle = name?.toLowerCase();
+        const series = all
+          .filter((s) => !needle || s.name.toLowerCase().includes(needle))
+          .filter((s) => !service || s.service_name === service)
+          .slice(0, limit);
+
+        if (series.length === 0) setOutcome('empty');
+
+        const empty =
+          all.length === 0
+            ? 'No metrics captured yet. Metrics go to the same OTLP endpoint as traces, under /v1/metrics.'
+            : `No series match those filters (${all.length} captured).`;
+        return text(seriesList(series, empty));
+      }),
+  );
+
+  server.registerTool(
     'clear_captured',
     {
       title: 'Clear captured telemetry',
       description:
-        'Drops the traces and logs captured so far, so the next run starts from an empty room. Local to this server: it does not clear the web app or other viewers.',
+        'Drops the traces, logs, and metrics captured so far, so the next run starts from an empty room. Local to this server: it does not clear the web app or other viewers.',
       annotations: { destructiveHint: true, idempotentHint: true },
     },
     async () =>
       measure('clear_captured', async () => {
         room.clear();
-        return text('Cleared the locally captured traces and logs.');
+        return text('Cleared the locally captured traces, logs, and metrics.');
       }),
   );
 

@@ -8,9 +8,9 @@
 // starts from an empty room, which is the trade for the CLI leaving nothing
 // behind but the room credentials.
 
-import { TraceStore, LogStore } from './relay';
+import { TraceStore, LogStore, MetricStore } from './relay';
 import type { SourceStatus, TelemetrySource } from './source';
-import type { Log, TraceEntry } from './types';
+import type { Log, Metric, TraceEntry } from './types';
 
 export interface WaitOptions {
   // Resolve once nothing new has arrived for this long.
@@ -24,6 +24,7 @@ export interface WaitOptions {
 export interface WaitResult {
   traces: TraceEntry[];
   logs: Log[];
+  metrics: Metric[];
   // Why the wait ended, so a caller can tell "nothing came" from "still busy".
   settled: boolean;
   timedOut: boolean;
@@ -36,6 +37,7 @@ export interface Room {
   error: () => string | null;
   traces: () => TraceEntry[];
   logs: () => Log[];
+  metrics: () => Metric[];
   trace: (idOrPrefix: string) => TraceEntry | null;
   waitForActivity: (options: WaitOptions) => Promise<WaitResult>;
   clear: () => void;
@@ -45,10 +47,12 @@ export interface Room {
 export function createRoom(source: TelemetrySource): Room {
   const traceStore = new TraceStore();
   const logStore = new LogStore();
+  const metricStore = new MetricStore();
   // Last time each trace was touched, so a wait can report the traces a run
   // produced (including ones that existed already and grew more spans).
   const touchedAt = new Map<string, number>();
   const logSeenAt = new Map<string, number>();
+  const metricSeenAt = new Map<string, number>();
 
   let status: SourceStatus = 'connecting';
   let error: string | null = null;
@@ -71,11 +75,18 @@ export function createRoom(source: TelemetrySource): Room {
       logSeenAt.set(log.log_id, Date.now());
       lastActivityAt = Date.now();
     },
+    onMetric: (metric) => {
+      metricStore.upsert(metric);
+      metricSeenAt.set(metric.metric_id, Date.now());
+      lastActivityAt = Date.now();
+    },
     onClear: () => {
       traceStore.clear();
       logStore.clear();
+      metricStore.clear();
       touchedAt.clear();
       logSeenAt.clear();
+      metricSeenAt.clear();
     },
   });
 
@@ -86,6 +97,7 @@ export function createRoom(source: TelemetrySource): Room {
     error: () => error,
     traces: () => traceStore.list(),
     logs: () => logStore.list(),
+    metrics: () => metricStore.list(),
 
     // Full id, or any unambiguous prefix: agents pass around shortened ids.
     trace(idOrPrefix) {
@@ -117,6 +129,11 @@ export function createRoom(source: TelemetrySource): Room {
             logs: logStore
               .list()
               .filter((log) => (logSeenAt.get(log.log_id) ?? 0) >= since),
+            metrics: metricStore
+              .list()
+              .filter(
+                (metric) => (metricSeenAt.get(metric.metric_id) ?? 0) >= since,
+              ),
             settled,
             timedOut: timedOut && !settled,
           };
@@ -129,8 +146,10 @@ export function createRoom(source: TelemetrySource): Room {
     clear() {
       traceStore.clear();
       logStore.clear();
+      metricStore.clear();
       touchedAt.clear();
       logSeenAt.clear();
+      metricSeenAt.clear();
     },
 
     close: () => handle.close(),

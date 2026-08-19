@@ -287,7 +287,7 @@ replay. Every measurement below is multiplied by it.
 
 ### Re-recording the CLI images with vhs
 
-`cli/vhs/` scripts the four CLI images, so they can be reshot when the TUI
+`cli/vhs/` scripts the CLI images, so they can be reshot when the TUI
 changes. [vhs](https://github.com/charmbracelet/vhs) does the pty-plus-xterm.js
 capture described above (it drives ttyd through headless Chrome), and
 `cli/vhs/frame.py` applies the gradient and window treatment above. `frame.py`
@@ -295,8 +295,8 @@ is the executable copy of this section, so the numbers here and the constants
 there have to move together.
 
 ```sh
-cd cli/vhs && ./record.sh          # all four, straight into docs/screenshots
-cd cli/vhs && ./record.sh json     # navigation | mcp | json | local
+cd cli/vhs && ./record.sh          # all of them, straight into docs/screenshots
+cd cli/vhs && ./record.sh json     # or one tape by name
 ```
 
 - `brew install vhs`, and register SF Mono first. macOS ships it inside

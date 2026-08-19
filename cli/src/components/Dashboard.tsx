@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useKeyboard,
   useRenderer,
@@ -11,12 +11,16 @@ import { Waterfall } from './Waterfall';
 import { SpanDetail } from './SpanDetail';
 import { LogList } from './LogList';
 import { LogDetail } from './LogDetail';
+import { MetricList } from './MetricList';
+import { MetricChart } from './MetricChart';
+import { MetricDetail } from './MetricDetail';
 import { EmptyState } from './EmptyState';
 import { StatusBar } from './StatusBar';
 import { UI } from '../theme';
 import { buildSpanTree } from '../span-tree';
 import { nativeCopy } from '../clipboard';
-import type { TraceEntry, Log } from '../types';
+import { groupSeries } from '../metrics';
+import type { TraceEntry, Log, Metric } from '../types';
 import type { RelayStatus } from '../relay';
 import type { Endpoints } from '../session';
 
@@ -27,12 +31,16 @@ interface Props {
   viewers: number;
   traces: TraceEntry[];
   logs: Log[];
+  metrics: Metric[];
   onClear: () => void;
   onQuit: () => void;
 }
 
-export type View = 'traces' | 'logs';
+export type View = 'traces' | 'logs' | 'metrics';
 type Focus = 'list' | 'detail' | 'links';
+
+// Left/right walk this order, wrapping at both ends.
+const VIEWS: View[] = ['traces', 'logs', 'metrics'];
 
 const COPIED_MS = 1600;
 // Header occupies 5 rows (border + 3 content lines); StatusBar occupies 1.
@@ -48,6 +56,7 @@ export function Dashboard({
   viewers,
   traces,
   logs,
+  metrics,
   onClear,
   onQuit,
 }: Props) {
@@ -57,6 +66,9 @@ export function Dashboard({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedSpanId, setSelectedSpanId] = useState<string | null>(null);
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [selectedSeriesKey, setSelectedSeriesKey] = useState<string | null>(
+    null,
+  );
   const [focus, setFocus] = useState<Focus>('list');
   const [selectedLink, setSelectedLink] = useState(0); // 0 = DSN, 1 = OTLP
   const [copiedLink, setCopiedLink] = useState<number | null>(null);
@@ -89,6 +101,16 @@ export function Dashboard({
   );
   const currentLog = logs[selectedLogIndex];
 
+  // Points arrive one at a time and are grouped into series only for display.
+  // Memoized on the raw points, so walking the list with the keyboard doesn't
+  // regroup a thousand of them on every press.
+  const series = useMemo(() => groupSeries(metrics), [metrics]);
+  const selectedSeriesIndex = Math.max(
+    0,
+    series.findIndex((s) => s.key === selectedSeriesKey),
+  );
+  const currentSeries = series[selectedSeriesIndex];
+
   useEffect(() => {
     if (traces.length === 0) return;
     const stillThere = traces.some((t) => t.trace.trace_id === selectedId);
@@ -100,6 +122,14 @@ export function Dashboard({
     const stillThere = logs.some((l) => l.log_id === selectedLogId);
     if (!stillThere) setSelectedLogId(logs[0]!.log_id);
   }, [logs, selectedLogId]);
+
+  // A series disappears when its last point ages out of the store, so fall back
+  // to the first rather than leaving the chart pointed at nothing.
+  useEffect(() => {
+    if (series.length === 0) return;
+    const stillThere = series.some((s) => s.key === selectedSeriesKey);
+    if (!stillThere) setSelectedSeriesKey(series[0]!.key);
+  }, [series, selectedSeriesKey]);
 
   // When the selected span leaves the current trace (trace switched, spans
   // arrived), snap back to the root span so the detail panel stays valid.
@@ -141,7 +171,8 @@ export function Dashboard({
       return;
     }
     if (key.name === 'left' || key.name === 'right') {
-      setView((v) => (v === 'traces' ? 'logs' : 'traces'));
+      const step = key.name === 'right' ? 1 : VIEWS.length - 1;
+      setView((v) => VIEWS[(VIEWS.indexOf(v) + step) % VIEWS.length]!);
       setFocus((f) => (f === 'links' ? f : 'list'));
       return;
     }
@@ -182,6 +213,20 @@ export function Dashboard({
       if (down)
         setSelectedLogId(
           logs[Math.min(logs.length - 1, selectedLogIndex + 1)]!.log_id,
+        );
+      return;
+    }
+
+    // Unlike the waterfall, a chart has nothing to walk within a series, so
+    // up/down keep moving between series whichever panel holds focus and the
+    // chart and stats follow along.
+    if (view === 'metrics') {
+      if (series.length === 0) return;
+      if (up)
+        setSelectedSeriesKey(series[Math.max(0, selectedSeriesIndex - 1)]!.key);
+      if (down)
+        setSelectedSeriesKey(
+          series[Math.min(series.length - 1, selectedSeriesIndex + 1)]!.key,
         );
       return;
     }
@@ -228,6 +273,113 @@ export function Dashboard({
     ? width - spanDetailWidth
     : width - traceListWidth;
 
+  // Same trade as the waterfall: the series list steps aside while the detail
+  // panel is up, since a chart reads better wide than a name column does.
+  const showMetricDetail =
+    view === 'metrics' && focus === 'detail' && !!currentSeries;
+  // Wider than the trace list: metric names are dotted paths, and the
+  // attributes that separate sibling series share the same row.
+  const seriesListWidth = Math.max(28, Math.min(48, Math.floor(width * 0.36)));
+  const metricDetailWidth = Math.max(
+    30,
+    Math.min(46, Math.floor(width * 0.34)),
+  );
+  const chartWidth = showMetricDetail
+    ? width - metricDetailWidth
+    : width - seriesListWidth;
+
+  let body;
+  if (view === 'logs') {
+    body =
+      logs.length === 0 || !currentLog ? (
+        <EmptyState status={status} error={error} what="logs" />
+      ) : (
+        <>
+          <LogList
+            logs={logs}
+            selected={selectedLogIndex}
+            width={logListWidth}
+            height={bodyHeight}
+            focused={focus === 'list'}
+          />
+          <LogDetail
+            log={currentLog}
+            width={width - logListWidth}
+            height={bodyHeight}
+            focused={focus === 'detail'}
+            scrollRef={detailScrollRef}
+            onScrollable={setDetailScrollable}
+          />
+        </>
+      );
+  } else if (view === 'metrics') {
+    body =
+      series.length === 0 || !currentSeries ? (
+        <EmptyState status={status} error={error} what="metrics" />
+      ) : (
+        <>
+          {showMetricDetail ? null : (
+            <MetricList
+              series={series}
+              selected={selectedSeriesIndex}
+              width={seriesListWidth}
+              height={bodyHeight}
+              focused={focus === 'list'}
+            />
+          )}
+          <MetricChart
+            series={currentSeries}
+            width={chartWidth}
+            height={bodyHeight}
+            focused={focus === 'detail'}
+          />
+          {showMetricDetail ? (
+            <MetricDetail
+              series={currentSeries}
+              width={metricDetailWidth}
+              height={bodyHeight}
+              focused={focus === 'detail'}
+              scrollRef={detailScrollRef}
+              onScrollable={setDetailScrollable}
+            />
+          ) : null}
+        </>
+      );
+  } else {
+    body =
+      traces.length === 0 || !current ? (
+        <EmptyState status={status} error={error} what="traces" />
+      ) : (
+        <>
+          {showSpanDetail ? null : (
+            <TraceList
+              traces={traces}
+              selected={selectedIndex}
+              width={traceListWidth}
+              focused={focus === 'list'}
+            />
+          )}
+          <Waterfall
+            trace={current}
+            width={waterfallWidth}
+            height={bodyHeight}
+            focused={focus === 'detail'}
+            selectedSpanId={selectedSpanId}
+          />
+          {showSpanDetail && currentSpan ? (
+            <SpanDetail
+              span={currentSpan}
+              width={spanDetailWidth}
+              height={bodyHeight}
+              focused={focus === 'detail'}
+              scrollRef={detailScrollRef}
+              onScrollable={setDetailScrollable}
+            />
+          ) : null}
+        </>
+      );
+  }
+
   return (
     <box
       style={{ flexDirection: 'column', width, height, backgroundColor: UI.bg }}
@@ -243,63 +395,10 @@ export function Dashboard({
         view={view}
         traceCount={traces.length}
         logCount={logs.length}
+        metricCount={series.length}
       />
 
-      <box style={{ flexDirection: 'row', flexGrow: 1 }}>
-        {view === 'logs' ? (
-          logs.length === 0 || !currentLog ? (
-            <EmptyState status={status} error={error} what="logs" />
-          ) : (
-            <>
-              <LogList
-                logs={logs}
-                selected={selectedLogIndex}
-                width={logListWidth}
-                height={bodyHeight}
-                focused={focus === 'list'}
-              />
-              <LogDetail
-                log={currentLog}
-                width={width - logListWidth}
-                height={bodyHeight}
-                focused={focus === 'detail'}
-                scrollRef={detailScrollRef}
-                onScrollable={setDetailScrollable}
-              />
-            </>
-          )
-        ) : traces.length === 0 || !current ? (
-          <EmptyState status={status} error={error} what="traces" />
-        ) : (
-          <>
-            {showSpanDetail ? null : (
-              <TraceList
-                traces={traces}
-                selected={selectedIndex}
-                width={traceListWidth}
-                focused={focus === 'list'}
-              />
-            )}
-            <Waterfall
-              trace={current}
-              width={waterfallWidth}
-              height={bodyHeight}
-              focused={focus === 'detail'}
-              selectedSpanId={selectedSpanId}
-            />
-            {showSpanDetail && currentSpan ? (
-              <SpanDetail
-                span={currentSpan}
-                width={spanDetailWidth}
-                height={bodyHeight}
-                focused={focus === 'detail'}
-                scrollRef={detailScrollRef}
-                onScrollable={setDetailScrollable}
-              />
-            ) : null}
-          </>
-        )}
-      </box>
+      <box style={{ flexDirection: 'row', flexGrow: 1 }}>{body}</box>
 
       <StatusBar
         focus={focus}

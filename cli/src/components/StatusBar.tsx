@@ -45,7 +45,7 @@ export function StatusBar({
         </>
       )}
       <Sep />
-      <Key k="←→" label="traces/logs" />
+      <Key k="←→" label="view" />
       <Sep />
       <Key k="tab" label="focus" />
       <Sep />
