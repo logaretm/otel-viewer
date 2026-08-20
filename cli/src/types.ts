@@ -6,6 +6,8 @@ export type {
   Span,
   Log,
   Metric,
+  MetricType,
+  HistogramData,
   TraceSource,
   WebSocketMessage,
 } from '../../shared/parsers/types';

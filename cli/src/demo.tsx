@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Dashboard } from './components/Dashboard';
-import { MOCK_TRACES, buildMockLogs } from './mock-data';
+import { MOCK_TRACES, buildMockLogs, buildMockMetrics } from './mock-data';
 import type { Endpoints } from './session';
 
 // Demo mode (--demo): renders the mock data with no network connection. Kept in
@@ -14,6 +14,7 @@ export function DemoApp({
 }) {
   const [traces, setTraces] = useState(MOCK_TRACES);
   const [logs, setLogs] = useState(buildMockLogs);
+  const [metrics, setMetrics] = useState(buildMockMetrics);
   return (
     <Dashboard
       endpoints={endpoints}
@@ -21,9 +22,11 @@ export function DemoApp({
       viewers={1}
       traces={traces}
       logs={logs}
+      metrics={metrics}
       onClear={() => {
         setTraces([]);
         setLogs([]);
+        setMetrics([]);
       }}
       onQuit={onQuit}
     />

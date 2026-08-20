@@ -32,7 +32,7 @@ Teley is a zero-setup observability dashboard. Every session gets its own room w
 Three ways in, same room:
 
 - **Web** at [teley.dev](https://teley.dev) for the full dashboard: waterfall traces, logs, metrics, and side-by-side trace comparison.
-- **Terminal** via `teley-cli` for a live waterfall without leaving your shell.
+- **Terminal** via `teley-cli` for a live waterfall and metric charts without leaving your shell.
 - **Agents** via `teley-cli mcp`, which hands the room to a coding agent over MCP.
 
 ## ⚡ Get started in under a minute
@@ -134,7 +134,7 @@ Running your own worker? Swap `teley.dev` for your host, or use `teley-cli --hos
 - **Waterfall traces.** Time-proportional span bars with a real hierarchy, span-kind badges (server/client/internal/producer/consumer), and color-coded errors.
 - **Span details.** ID, parent, kind, status, timing, attributes, events, and links. One click from any span.
 - **Live logs.** Real-time stream with severity coloring (`TRACE` through `FATAL`), expandable rows, and trace/span correlation.
-- **Metrics.** Counters, gauges, histograms, and sets, charted as they arrive.
+- **Metrics.** Counters, gauges, histograms, and sets, charted as they arrive, in the dashboard and in the terminal alike.
 - **Trace comparison.** Line up two traces side by side. Spans are aligned with an LCS diff, and the differences in structure, duration, and attributes are called out.
 - **Two protocols, one view.** OTLP and Sentry envelopes land in the same unified timeline.
 - **Readable by agents.** `teley-cli mcp` hands the same room to a coding agent as MCP tools, so it can run your app and read the span tree back.
@@ -171,7 +171,7 @@ Running your own worker? Swap `teley.dev` for your host, or use `teley-cli --hos
 
 | Key                      | Action                                        |
 | ------------------------ | --------------------------------------------- |
-| `←` / `→`                | Switch between Traces and Logs                |
+| `←` / `→`                | Cycle Traces, Logs, and Metrics               |
 | `↑` / `↓` (or `j` / `k`) | Navigate the focused panel                    |
 | `tab`                    | Cycle focus: list → detail → connection links |
 | `↵` / `y`                | Copy the focused DSN or OTLP endpoint         |

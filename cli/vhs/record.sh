@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Re-record the CLI screenshots in docs/screenshots.
 #
-#   ./record.sh              # all four
+#   ./record.sh              # all of them
 #   ./record.sh navigation   # just one
 #
 # Needs vhs (brew install vhs) and SF Mono registered as a font family. See
@@ -25,7 +25,7 @@ cat > .home/.teley/session.json <<'JSON'
 }
 JSON
 
-targets=("${@:-navigation mcp json local}")
+targets=("${@:-navigation metrics metrics-histogram mcp json local}")
 # shellcheck disable=SC2128
 read -ra targets <<< "${targets[*]}"
 
@@ -35,6 +35,19 @@ if has navigation; then
   echo "==> navigation"
   vhs navigation.tape
   python3 frame.py raw/navigation.gif "$OUT/teley-cli-navigation.gif"
+fi
+
+if has metrics; then
+  echo "==> metrics"
+  vhs metrics.tape
+  python3 frame.py raw/metrics.png "$OUT/teley-cli-metrics.png" --width 2000
+fi
+
+if has metrics-histogram; then
+  echo "==> metrics-histogram"
+  vhs metrics-histogram.tape
+  python3 frame.py raw/metrics-histogram.png \
+    "$OUT/teley-cli-metrics-histogram.png" --width 2000
 fi
 
 if has mcp; then

@@ -76,8 +76,8 @@ async function ingestOTLP(
   }
 
   if (signal === 'metrics') {
-    // Parsed for the count, then dropped: the CLI renders no metrics yet.
     const result = parseOTLPMetrics(body);
+    for (const metric of result.metrics) events.onMetric?.(metric);
     accepted('otlp', signal, encoding, result.metrics.length);
     return json({ status: 'success', metricsReceived: result.metrics.length });
   }
@@ -117,9 +117,13 @@ async function ingestSentry(
     events.onTrace?.(trace, spans);
   }
   for (const log of result.logs) events.onLog?.(log);
+  for (const metric of result.metrics) events.onMetric?.(metric);
   accepted('sentry', 'traces', 'json', result.traces.length);
   if (result.logs.length > 0) {
     accepted('sentry', 'logs', 'json', result.logs.length);
+  }
+  if (result.metrics.length > 0) {
+    accepted('sentry', 'metrics', 'json', result.metrics.length);
   }
 
   return json({ id: crypto.randomUUID().replace(/-/g, '') });

@@ -2,8 +2,9 @@ Output raw/navigation.gif
 Source common.tape
 Set Height 1089
 
-# 140x27. The trace list, the waterfall, the header links, and the log stream,
-# walked in that order so every row of the key table appears at least once.
+# 140x27. The trace list, the waterfall, the header links, the log stream, and
+# the metric charts, walked in that order so every row of the key table appears
+# at least once, and left/right is seen cycling all three views and wrapping.
 
 Hide
 Type "export HOME=$PWD/.home && cd .. && clear"
@@ -63,5 +64,23 @@ Sleep 1200ms
 Down 1
 Sleep 2200ms
 
-Left 1
+# -> metrics. Walking the series redraws the chart under the selection: a
+# counter, then the same gauge split two ways, then a histogram's buckets.
+Right 1
+Sleep 2200ms
+Down 1
+Sleep 1800ms
+Down 1
+Sleep 1800ms
+Down 1
+Sleep 1600ms
+Down 1
+Sleep 2200ms
+
+# tab swaps the series list for the stats panel, and the chart takes the width.
+Tab
+Sleep 2600ms
+
+# right from the last view wraps back to the first, and resets focus.
+Right 1
 Sleep 2s

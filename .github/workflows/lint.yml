@@ -47,3 +47,14 @@ jobs:
       - name: Check formatting
         if: ${{ !cancelled() }}
         run: pnpm run format:check
+
+      # The CLI's chart and series maths are pure and were shipped untested,
+      # which is how a NaN that hangs the render loop got as far as review.
+      - uses: oven-sh/setup-bun@v2
+        if: ${{ !cancelled() }}
+        with:
+          bun-version: latest
+
+      - name: Test
+        if: ${{ !cancelled() }}
+        run: pnpm run test

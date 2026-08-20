@@ -4,7 +4,7 @@ import type { RelayStatus } from '../relay';
 interface Props {
   status: RelayStatus;
   error?: string | null;
-  what?: 'traces' | 'logs';
+  what?: 'traces' | 'logs' | 'metrics';
 }
 
 export function EmptyState({ status, error, what = 'traces' }: Props) {

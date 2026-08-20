@@ -102,3 +102,79 @@ export function stringifyValue(value: unknown): string {
     return String(value);
   }
 }
+
+// Compact number for chart axes and metric readouts: 1.2k, 3.4M, 0.75. Axis
+// ticks are read for magnitude, not for exact value, and a raw float would cost
+// more columns than the plot beside it can spare.
+export function formatCompact(value: number): string {
+  if (!Number.isFinite(value)) return value > 0 ? '+∞' : '-∞';
+  const abs = Math.abs(value);
+  if (abs >= 1e9) return `${trimZeros(value / 1e9)}G`;
+  if (abs >= 1e6) return `${trimZeros(value / 1e6)}M`;
+  if (abs >= 1e3) return `${trimZeros(value / 1e3)}k`;
+  if (Number.isInteger(value)) return String(value);
+  if (abs >= 1) return trimZeros(value);
+  // Small values are where the interesting precision usually is (rates,
+  // ratios), so keep more of it than the one decimal used above.
+  return Number(value.toPrecision(3)).toString();
+}
+
+function trimZeros(value: number): string {
+  return Number(value.toFixed(1)).toString();
+}
+
+// OTLP carries units as UCUM, where a few codes are not what a reader expects,
+// and Sentry spells the same dimensions out in full. Both are mapped to the
+// symbol a chart has room for. Anything unlisted passes through.
+const UNIT_LABEL: Record<string, string> = {
+  // UCUM, as OTLP sends it.
+  '1': '',
+  '%': '%',
+  By: 'bytes',
+  KiBy: 'KiB',
+  MiBy: 'MiB',
+  GiBy: 'GiB',
+  ns: 'ns',
+  us: 'µs',
+  ms: 'ms',
+  s: 's',
+  min: 'min',
+  h: 'h',
+  // Sentry's spelled-out units. `none` and `ratio` are dimensionless, so they
+  // print as nothing rather than as a word beside every value.
+  none: '',
+  ratio: '',
+  percent: '%',
+  nanosecond: 'ns',
+  microsecond: 'µs',
+  millisecond: 'ms',
+  second: 's',
+  minute: 'min',
+  hour: 'h',
+  day: 'd',
+  week: 'w',
+  bit: 'bits',
+  byte: 'bytes',
+  kilobyte: 'kB',
+  kibibyte: 'KiB',
+  megabyte: 'MB',
+  mebibyte: 'MiB',
+  gigabyte: 'GB',
+  gibibyte: 'GiB',
+  terabyte: 'TB',
+  tebibyte: 'TiB',
+  petabyte: 'PB',
+  pebibyte: 'PiB',
+  exabyte: 'EB',
+  exbibyte: 'EiB',
+};
+
+// The unit to print after a value. Empty when there is nothing worth printing:
+// UCUM's `1` is dimensionless, and an annotation like `{request}` names what is
+// being counted rather than a dimension, which the metric's own name already
+// says. Detail panels show the raw unit instead, where there is room for it.
+export function unitLabel(unit: string | null | undefined): string {
+  if (!unit) return '';
+  if (/^\{.*\}$/.test(unit)) return '';
+  return UNIT_LABEL[unit] ?? unit;
+}

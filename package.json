@@ -12,6 +12,7 @@
     "lint": "oxlint --type-aware",
     "lint:fix": "oxlint --type-aware --fix",
     "typecheck": "pnpm -r --if-present run typecheck",
+    "test": "pnpm -r --if-present run test",
     "format": "oxfmt",
     "format:check": "oxfmt --check"
   },

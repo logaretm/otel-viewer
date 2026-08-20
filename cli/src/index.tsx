@@ -71,7 +71,7 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
-const HELP = `teley — terminal trace viewer
+const HELP = `teley — terminal trace, log, and metric viewer
 
 Usage: teley [options]
        teley mcp [options]   Serve the room to a coding agent over MCP (stdio)
@@ -79,7 +79,7 @@ Usage: teley [options]
 Options:
   --host <host>   Relay host (default: ${DEFAULT_HOST}, or $TELEY_HOST)
   --new           Start a fresh room (new DSN), ignoring the saved session
-  --demo          Render sample traces without connecting
+  --demo          Render sample telemetry without connecting
   --json          Stream newline-delimited JSON to stdout instead of the TUI
   --local         Receive telemetry on this machine, with no relay involved
   --port <port>   Ingest port for --local (default: ${DEFAULT_LOCAL_PORT}, 0 picks a free one)
@@ -87,8 +87,10 @@ Options:
   -h, --help      Show this help
 
 Point your app's OpenTelemetry/Sentry SDK at the DSN shown in the header.
+←/→ switches between the traces, logs, and metrics views.
+
 With --json the DSN is the first line on stdout, and every trace, log, and
-status change follows as one JSON object per line.
+metric follows as one JSON object per line.
 
 --local makes this process the ingest endpoint, so nothing leaves the machine.
 The web dashboard cannot open a local room; the terminal and MCP work the same.`;

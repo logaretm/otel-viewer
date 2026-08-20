@@ -1,6 +1,13 @@
 // Static mock telemetry for --demo mode (and for iterating on the UI).
 
-import type { TraceEntry, Span, Log, TraceSource } from './types';
+import type {
+  TraceEntry,
+  Span,
+  Log,
+  Metric,
+  MetricType,
+  TraceSource,
+} from './types';
 
 let seq = 0;
 
@@ -362,4 +369,143 @@ export function buildMockLogs(): Log[] {
     service_name: s.service,
     attributes: s.attributes ?? {},
   }));
+}
+
+// Metric series for --demo. Values are deterministic functions of the sample
+// index rather than random, so the demo renders the same chart every run and a
+// screenshot of it stays reproducible.
+
+const SAMPLES = 60;
+const SAMPLE_MS = 5_000;
+
+interface MetricSpec {
+  name: string;
+  type: MetricType;
+  unit: string | null;
+  description: string | null;
+  service: string;
+  source?: TraceSource;
+  attributes?: Record<string, unknown>;
+  // Sampled once per point. Omitted for histograms, which carry buckets.
+  value?: (i: number) => number;
+  histogram?: { bounds: number[]; counts: number[] };
+}
+
+const METRIC_SPECS: MetricSpec[] = [
+  {
+    name: 'http.server.request.duration',
+    type: 'histogram',
+    unit: 'ms',
+    description: 'Duration of inbound HTTP requests',
+    service: 'checkout-api',
+    histogram: {
+      bounds: [5, 10, 25, 50, 100, 250, 500, 1000],
+      counts: [3, 14, 61, 128, 96, 41, 12, 4, 1],
+    },
+  },
+  {
+    name: 'http.server.active_requests',
+    type: 'gauge',
+    unit: '{request}',
+    description: 'Requests currently in flight',
+    service: 'checkout-api',
+    value: (i) => 18 + Math.sin(i / 5) * 11 + Math.sin(i / 1.7) * 3,
+  },
+  {
+    name: 'checkout.orders.completed',
+    type: 'counter',
+    unit: '{order}',
+    description: 'Orders that reached the confirmation page',
+    service: 'checkout-api',
+    value: (i) => 1240 + i * 7 + Math.floor(Math.sin(i / 4) * 5),
+  },
+  {
+    name: 'db.client.connections.usage',
+    type: 'gauge',
+    unit: '{connection}',
+    description: 'Connections checked out of the pool',
+    service: 'checkout-api',
+    attributes: { 'db.pool.name': 'primary', 'db.system': 'postgresql' },
+    value: (i) => 9 + Math.sin(i / 7) * 4,
+  },
+  {
+    name: 'db.client.connections.usage',
+    type: 'gauge',
+    unit: '{connection}',
+    description: 'Connections checked out of the pool',
+    service: 'checkout-api',
+    attributes: { 'db.pool.name': 'replica', 'db.system': 'postgresql' },
+    value: (i) => 22 + Math.sin(i / 3.2) * 9,
+  },
+  {
+    name: 'process.runtime.memory.heap',
+    type: 'gauge',
+    unit: 'By',
+    description: 'Resident heap size',
+    service: 'worker',
+    // Sawtooth: climbs, then drops on collection.
+    value: (i) => 48_000_000 + (i % 14) * 3_100_000,
+  },
+  {
+    name: 'payments.declined',
+    type: 'counter',
+    unit: '{payment}',
+    description: null,
+    service: 'payments',
+    source: 'SENTRY',
+    value: (i) => 6 + Math.floor(i / 9),
+  },
+];
+
+// Built lazily so timestamps are relative to launch, not module load.
+export function buildMockMetrics(): Metric[] {
+  const now = Date.now();
+  const metrics: Metric[] = [];
+
+  for (const [specIndex, spec] of METRIC_SPECS.entries()) {
+    // A histogram is a cumulative snapshot, so the demo emits a handful rather
+    // than one per sample: only the newest is ever charted.
+    const points = spec.histogram ? 8 : SAMPLES;
+
+    for (let i = 0; i < points; i++) {
+      const age =
+        (points - 1 - i) * (spec.histogram ? SAMPLE_MS * 8 : SAMPLE_MS);
+      const timestamp = now - age;
+      let histogram: Metric['histogram'] = null;
+
+      if (spec.histogram) {
+        // Counts accumulate as the snapshot ages forward.
+        const scale = (i + 1) / points;
+        const buckets = spec.histogram.counts.map((count, b) => ({
+          bound: spec.histogram!.bounds[b] ?? Infinity,
+          count: Math.round(count * scale),
+        }));
+        const count = buckets.reduce((sum, b) => sum + b.count, 0);
+        histogram = {
+          buckets,
+          sum: count * 96,
+          count,
+          min: 2.4,
+          max: 1840,
+        };
+      }
+
+      metrics.push({
+        metric_id: `metric${specIndex}-${i}`,
+        name: spec.name,
+        description: spec.description,
+        unit: spec.unit,
+        type: spec.type,
+        service_name: spec.service,
+        timestamp,
+        value: spec.value ? Number(spec.value(i).toFixed(2)) : null,
+        histogram,
+        set_values: null,
+        attributes: spec.attributes ?? {},
+        source: spec.source ?? 'OTLP',
+      });
+    }
+  }
+
+  return metrics;
 }

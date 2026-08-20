@@ -3,8 +3,8 @@ import { useLiveData } from './relay';
 import type { Endpoints } from './session';
 import type { TelemetrySource } from './source';
 
-// Live mode: streams real traces + logs from the room's source (the relay, or
-// the local ingest server under --local).
+// Live mode: streams real traces, logs, and metrics from the room's source
+// (the relay, or the local ingest server under --local).
 export function LiveApp({
   endpoints,
   source,
@@ -14,7 +14,8 @@ export function LiveApp({
   source: TelemetrySource;
   onQuit: () => void;
 }) {
-  const { status, error, viewers, traces, logs, clear } = useLiveData(source);
+  const { status, error, viewers, traces, logs, metrics, clear } =
+    useLiveData(source);
   return (
     <Dashboard
       endpoints={endpoints}
@@ -23,6 +24,7 @@ export function LiveApp({
       viewers={viewers}
       traces={traces}
       logs={logs}
+      metrics={metrics}
       onClear={clear}
       onQuit={onQuit}
     />

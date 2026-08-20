@@ -3,7 +3,14 @@
 // to the room, heartbeat ping/pong, auto-reconnect with exponential backoff.
 
 import { useEffect, useRef, useState } from 'react';
-import type { Trace, Span, Log, TraceEntry, WebSocketMessage } from './types';
+import type {
+  Trace,
+  Span,
+  Log,
+  Metric,
+  TraceEntry,
+  WebSocketMessage,
+} from './types';
 import type { TelemetrySource } from './source';
 import { count, logger, METRIC } from './observability';
 import { summarizeTrace } from '../../shared/parsers/trace-summary';
@@ -23,6 +30,9 @@ const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
 const MAX_TRACES = 200;
 const MAX_LOGS = 500;
+// Points, not series: a chart wants history, and one busy series is worth more
+// rows than one trace is. Matches the web app's own metric cap.
+const MAX_METRICS = 1000;
 
 // Bun reports a non-101 handshake response (e.g. the relay's 401/400) as a
 // close with code 1002, distinct from an established socket dropping (1006).
@@ -33,6 +43,7 @@ interface RelayEvents {
   onReject?: (reason: string) => void;
   onTrace?: (trace: Trace, spans: Span[]) => void;
   onLog?: (log: Log) => void;
+  onMetric?: (metric: Metric) => void;
   onViewerCount?: (count: number) => void;
   onClear?: () => void;
 }
@@ -130,6 +141,9 @@ export function createRelay(wsUrl: string, events: RelayEvents) {
         case 'log_update':
           events.onLog?.(msg.data.log);
           break;
+        case 'metric_update':
+          events.onMetric?.(msg.data.metric);
+          break;
         case 'viewer_count':
           events.onViewerCount?.(msg.count);
           break;
@@ -137,7 +151,6 @@ export function createRelay(wsUrl: string, events: RelayEvents) {
         case 'cleared_data':
           events.onClear?.();
           break;
-        // metric_update: ignored for now
       }
     };
 
@@ -298,12 +311,35 @@ export class LogStore extends BoundedStore<Log> {
   }
 }
 
+// Accumulates metric points, deduped by id, newest first. Points are grouped
+// into series at render time (see metrics.ts) rather than here, so the store
+// stays the same shape as the other two.
+export class MetricStore extends BoundedStore<Metric> {
+  protected readonly max = MAX_METRICS;
+
+  protected idOf(metric: Metric) {
+    return metric.metric_id;
+  }
+  protected orderOf(metric: Metric) {
+    return metric.timestamp;
+  }
+
+  upsert(metric: Metric) {
+    this.store(metric);
+  }
+
+  list(): Metric[] {
+    return this.sorted();
+  }
+}
+
 export interface LiveData {
   status: RelayStatus;
   error: string | null;
   viewers: number;
   traces: TraceEntry[];
   logs: Log[];
+  metrics: Metric[];
   clear: () => void;
 }
 
@@ -316,6 +352,7 @@ export function useLiveData(source: TelemetrySource): LiveData {
   const [, bump] = useState(0);
   const traceStore = useRef<TraceStore>(new TraceStore());
   const logStore = useRef<LogStore>(new LogStore());
+  const metricStore = useRef<MetricStore>(new MetricStore());
 
   useEffect(() => {
     setError(null);
@@ -332,9 +369,14 @@ export function useLiveData(source: TelemetrySource): LiveData {
         logStore.current.upsert(log);
         rerender();
       },
+      onMetric: (metric) => {
+        metricStore.current.upsert(metric);
+        rerender();
+      },
       onClear: () => {
         traceStore.current.clear();
         logStore.current.clear();
+        metricStore.current.clear();
         rerender();
       },
     });
@@ -347,9 +389,11 @@ export function useLiveData(source: TelemetrySource): LiveData {
     viewers,
     traces: traceStore.current.list(),
     logs: logStore.current.list(),
+    metrics: metricStore.current.list(),
     clear: () => {
       traceStore.current.clear();
       logStore.current.clear();
+      metricStore.current.clear();
       bump((n) => n + 1);
     },
   };

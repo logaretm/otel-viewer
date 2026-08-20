@@ -13,7 +13,14 @@ interface Props {
   view: View;
   traceCount: number;
   logCount: number;
+  metricCount: number;
 }
+
+// The header is exactly HEADER_H rows (see Dashboard), which the body height is
+// computed from. A row that wrapped instead of clipping would push the panels
+// past the bottom of the terminal, so every row here is pinned to one line and
+// clips whatever a narrow terminal cannot fit.
+const ROW = { height: 1, flexShrink: 0, overflow: 'hidden' } as const;
 
 const STATUS_META: Record<
   RelayStatus,
@@ -39,6 +46,7 @@ function LinkRow({
   return (
     <box
       style={{
+        ...ROW,
         flexDirection: 'row',
         backgroundColor: active ? UI.panel : undefined,
       }}
@@ -81,6 +89,7 @@ export function Header({
   view,
   traceCount,
   logCount,
+  metricCount,
 }: Props) {
   const s = STATUS_META[status];
   return (
@@ -94,13 +103,14 @@ export function Header({
         paddingRight: 1,
       }}
     >
-      <box style={{ flexDirection: 'row' }}>
+      <box style={{ ...ROW, flexDirection: 'row' }}>
         <text fg={UI.accent} attributes={BOLD}>
           teley
         </text>
         <text fg={UI.dim}>{'   '}</text>
         <Tab label="Traces" count={traceCount} active={view === 'traces'} />
         <Tab label="Logs" count={logCount} active={view === 'logs'} />
+        <Tab label="Metrics" count={metricCount} active={view === 'metrics'} />
         <box style={{ flexGrow: 1 }} />
         {focused ? <text fg={UI.dim}>↑↓ select · ↵ copy </text> : null}
         <text fg={s.color}>{`${s.dot} ${s.label}`}</text>
